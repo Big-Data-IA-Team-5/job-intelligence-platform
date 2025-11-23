@@ -1,0 +1,66 @@
+# Snowflake Cortex Semantic Model Configuration
+# Agent 1: Semantic Search and Q&A
+
+name: job_intelligence_semantic_model
+type: semantic_model
+
+description: |
+  Semantic model for job search and intelligence queries.
+  Provides natural language search over job postings with H1B sponsorship data.
+
+database: JOB_INTELLIGENCE
+schema: MARTS
+
+tables:
+  - name: job_intelligence_mart
+    description: Main job postings with enrichment
+    columns:
+      - name: job_id
+        description: Unique job identifier
+      - name: title
+        description: Job title
+        searchable: true
+      - name: company_name
+        description: Company name
+        searchable: true
+      - name: location
+        description: Job location
+        searchable: true
+      - name: description
+        description: Full job description
+        searchable: true
+      - name: job_category
+        description: Job category (Engineering, Data, etc.)
+      - name: seniority_level
+        description: Seniority level
+      - name: likely_sponsors_h1b
+        description: Whether company likely sponsors H1B
+      - name: is_remote
+        description: Remote work availability
+      - name: salary_range
+        description: Salary range
+      - name: posted_date
+        description: When job was posted
+
+search_config:
+  embedding_column: description_embedding
+  text_columns:
+    - title
+    - company_name
+    - description
+    - extracted_skills
+  
+  filters:
+    - column: is_remote
+      type: boolean
+    - column: likely_sponsors_h1b
+      type: boolean
+    - column: job_category
+      type: categorical
+    - column: seniority_level
+      type: categorical
+
+# Example queries this model can answer:
+# - "Find remote data engineer jobs that sponsor H1B"
+# - "Show me senior software engineer positions in San Francisco"
+# - "What companies are hiring machine learning engineers?"

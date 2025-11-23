@@ -1,0 +1,19 @@
+# Snowflake Connection Configuration
+# Copy this file to snowflake_config.yml and fill in your details
+
+account: your-account.snowflakecomputing.com
+user: your-username
+password: your-password
+warehouse: COMPUTE_WH
+database: JOB_INTELLIGENCE
+schema: RAW
+role: ACCOUNTADMIN
+
+# Connection options
+authenticator: snowflake  # or 'externalbrowser' for SSO
+session_parameters:
+  QUERY_TAG: job-intelligence-platform
+  
+# Retry configuration
+network_timeout: 60
+login_timeout: 60

@@ -1,0 +1,30 @@
+-- Create schemas for different data layers
+USE DATABASE JOB_INTELLIGENCE;
+USE ROLE ACCOUNTADMIN;
+
+-- RAW schema for ingested data
+CREATE SCHEMA IF NOT EXISTS RAW
+    COMMENT = 'Raw data from scrapers and external sources';
+
+-- STAGING schema for DBT staging models
+CREATE SCHEMA IF NOT EXISTS STAGING
+    COMMENT = 'Staging views and initial transformations';
+
+-- PROCESSING schema for intermediate transformations
+CREATE SCHEMA IF NOT EXISTS PROCESSING
+    COMMENT = 'Processing layer with enriched and classified data';
+
+-- MARTS schema for final analytics tables
+CREATE SCHEMA IF NOT EXISTS MARTS
+    COMMENT = 'Final data marts for consumption';
+
+-- Grant privileges
+GRANT USAGE ON SCHEMA RAW TO ROLE SYSADMIN;
+GRANT USAGE ON SCHEMA STAGING TO ROLE SYSADMIN;
+GRANT USAGE ON SCHEMA PROCESSING TO ROLE SYSADMIN;
+GRANT USAGE ON SCHEMA MARTS TO ROLE SYSADMIN;
+
+GRANT ALL ON SCHEMA RAW TO ROLE SYSADMIN;
+GRANT ALL ON SCHEMA STAGING TO ROLE SYSADMIN;
+GRANT ALL ON SCHEMA PROCESSING TO ROLE SYSADMIN;
+GRANT ALL ON SCHEMA MARTS TO ROLE SYSADMIN;
