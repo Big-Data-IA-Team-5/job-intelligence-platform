@@ -1,66 +1,73 @@
-# Snowflake Cortex Semantic Model Configuration
-# Agent 1: Semantic Search and Q&A
-
-name: job_intelligence_semantic_model
-type: semantic_model
-
-description: |
-  Semantic model for job search and intelligence queries.
-  Provides natural language search over job postings with H1B sponsorship data.
-
-database: JOB_INTELLIGENCE
-schema: MARTS
+name: job_search_semantic_model
+description: "Natural language job search with visa intelligence"
 
 tables:
-  - name: job_intelligence_mart
-    description: Main job postings with enrichment
+  - name: jobs_processed
+    description: "Job postings with visa classification"
+    base_table:
+      database: job_intelligence
+      schema: processed
+      table: jobs_processed
+    
     columns:
-      - name: job_id
-        description: Unique job identifier
       - name: title
-        description: Job title
-        searchable: true
-      - name: company_name
-        description: Company name
-        searchable: true
+        description: "Job title (e.g., Software Engineer, Data Analyst)"
+        synonyms: ["position", "role", "job"]
+        data_type: STRING
+        
+      - name: company_clean
+        description: "Company or employer name"
+        synonyms: ["employer", "organization", "company"]
+        data_type: STRING
+        
       - name: location
-        description: Job location
-        searchable: true
-      - name: description
-        description: Full job description
-        searchable: true
-      - name: job_category
-        description: Job category (Engineering, Data, etc.)
-      - name: seniority_level
-        description: Seniority level
-      - name: likely_sponsors_h1b
-        description: Whether company likely sponsors H1B
-      - name: is_remote
-        description: Remote work availability
-      - name: salary_range
-        description: Salary range
-      - name: posted_date
-        description: When job was posted
+        description: "Job location (city, state)"
+        synonyms: ["place", "city", "area"]
+        data_type: STRING
+        
+      - name: salary_min
+        description: "Minimum salary in USD per year"
+        synonyms: ["minimum pay", "base salary"]
+        data_type: NUMBER
+        
+      - name: job_type
+        description: "Job type: Internship, Full-time, Remote"
+        synonyms: ["employment type", "position type"]
+        data_type: STRING
+        
+      - name: visa_category
+        description: "Visa: CPT (internships), OPT (new grads), H-1B (sponsored)"
+        synonyms: ["visa status", "work authorization"]
+        data_type: STRING
+        
+      - name: h1b_sponsor
+        description: "Whether company sponsors H-1B visas"
+        synonyms: ["sponsors visa", "h1b sponsorship"]
+        data_type: BOOLEAN
 
-search_config:
-  embedding_column: description_embedding
-  text_columns:
-    - title
-    - company_name
-    - description
-    - extracted_skills
-  
-  filters:
-    - column: is_remote
-      type: boolean
-    - column: likely_sponsors_h1b
-      type: boolean
-    - column: job_category
-      type: categorical
-    - column: seniority_level
-      type: categorical
+    measures:
+      - name: total_jobs
+        description: "Total number of jobs"
+        expr: COUNT(*)
+        
+      - name: avg_salary
+        description: "Average salary"
+        expr: AVG((salary_min + salary_max) / 2)
 
-# Example queries this model can answer:
-# - "Find remote data engineer jobs that sponsor H1B"
-# - "Show me senior software engineer positions in San Francisco"
-# - "What companies are hiring machine learning engineers?"
+filters:
+  - name: cpt_eligible
+    description: "CPT internships for students"
+    expr: "visa_category = 'CPT'"
+    
+  - name: h1b_sponsors
+    description: "Companies that sponsor H-1B"
+    expr: "h1b_sponsor = TRUE"
+
+sample_queries:
+  - question: "Show me CPT internships in Boston"
+    sql: |
+      SELECT title, company_clean, location
+      FROM jobs_processed
+      WHERE visa_category = 'CPT'
+        AND location ILIKE '%Boston%'
+      LIMIT 20
