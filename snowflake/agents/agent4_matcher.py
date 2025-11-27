@@ -239,6 +239,7 @@ class ResumeMatcherAgent:
                     company_clean as company,
                     location,
                     description,
+                    qualifications,
                     salary_min,
                     salary_max,
                     job_type,
@@ -311,11 +312,15 @@ class ResumeMatcherAgent:
         }
         
         # Skills score (keyword matching)
+        # ENHANCED: Use qualifications field if available for better matching
         candidate_skills = [s.lower() for s in profile.get('technical_skills', [])]
-        job_desc = job.get('DESCRIPTION', '').lower()
+        
+        # Prioritize qualifications field, fall back to description
+        qualifications = job.get('QUALIFICATIONS', '') or job.get('DESCRIPTION', '')
+        search_text = qualifications.lower()
         
         if candidate_skills:
-            matches = sum(1 for skill in candidate_skills if skill in job_desc)
+            matches = sum(1 for skill in candidate_skills if skill in search_text)
             scores['skills'] = min((matches / len(candidate_skills)) * 100, 100)
         
         # Experience score

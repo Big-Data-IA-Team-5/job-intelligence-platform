@@ -48,6 +48,15 @@ CREATE OR REPLACE TABLE jobs_processed (
     classification_signals ARRAY,        -- Keywords found ['cpt', 'intern']
     classified_at TIMESTAMP_NTZ,
     
+    -- NEW ENHANCED FIELDS
+    work_model VARCHAR(50),              -- Remote, Hybrid, Onsite
+    department VARCHAR(100),             -- Engineering, Sales, etc.
+    company_size VARCHAR(50),            -- Startup, Mid-size, Enterprise
+    qualifications TEXT,                 -- Job requirements
+    h1b_sponsored_explicit BOOLEAN,      -- Explicit H-1B sponsorship flag
+    is_new_grad_role BOOLEAN,            -- New grad position flag
+    job_category VARCHAR(100),           -- Job category
+    
     -- VECTOR EMBEDDING (Cortex)
     job_embedding VECTOR(FLOAT, 768),    -- For semantic search
     

@@ -1,58 +1,70 @@
--- Classified Jobs
--- Uses Snowflake Cortex to classify jobs by category, seniority, etc.
+{{ config(
+    materialized='incremental',
+    unique_key='job_id',
+    tags=['classification', 'agent3']
+) }}
 
-{{
-    config(
-        materialized='table',
-        schema='processing'
-    )
-}}
+/*
+Classify jobs using Agent 3 (Visa Classifier)
+Calls Mixtral 8x7B to determine: CPT, OPT, H-1B, or US-Only
+*/
 
-WITH jobs AS (
-    SELECT * FROM {{ ref('h1b_matched_jobs') }}
+WITH unclassified_jobs AS (
+    SELECT 
+        job_id,
+        url,
+        title,
+        company_clean,
+        location,
+        description
+    FROM {{ ref('h1b_matched_jobs') }}
+    
+    {% if is_incremental() %}
+    -- Only process new jobs in incremental mode
+    WHERE processed_at > (SELECT MAX(classified_at) FROM {{ this }})
+    {% endif %}
 ),
 
-classified AS (
+-- Call Agent 3 for classification (simplified for dbt)
+-- In production, this would call the Python agent
+-- For now, use keyword-based classification
+classifications AS (
     SELECT
-        *,
-        -- Use Cortex Complete for classification
-        SNOWFLAKE.CORTEX.COMPLETE(
-            'mistral-large',
-            CONCAT(
-                'Classify this job into one category: Engineering, Data, Product, Design, Sales, Marketing, Operations, Other. ',
-                'Job title: ', title, '. ',
-                'Description: ', LEFT(description, 500), '. ',
-                'Return only the category name.'
-            )
-        ) AS job_category,
+        job_id,
+        url,
+        title,
+        company_clean,
+        location,
+        description,
         
-        -- Seniority level detection
+        -- Simple classification logic (will be replaced by Agent 3)
         CASE
-            WHEN LOWER(title) LIKE '%senior%' OR LOWER(title) LIKE '%sr %' OR LOWER(title) LIKE '%lead%' THEN 'Senior'
-            WHEN LOWER(title) LIKE '%junior%' OR LOWER(title) LIKE '%jr %' OR LOWER(title) LIKE '%entry%' THEN 'Junior'
-            WHEN LOWER(title) LIKE '%principal%' OR LOWER(title) LIKE '%staff%' THEN 'Principal'
-            WHEN LOWER(title) LIKE '%manager%' OR LOWER(title) LIKE '%director%' THEN 'Management'
-            ELSE 'Mid-Level'
-        END AS seniority_level,
+            WHEN LOWER(title) LIKE '%intern%' OR LOWER(description) LIKE '%cpt%' THEN 'CPT'
+            WHEN LOWER(description) LIKE '%opt%' OR LOWER(description) LIKE '%new grad%' THEN 'OPT'
+            WHEN LOWER(description) LIKE '%sponsor%' OR LOWER(description) LIKE '%h-1b%' THEN 'H-1B'
+            WHEN LOWER(description) LIKE '%citizenship%' OR LOWER(description) LIKE '%clearance%' THEN 'US-Only'
+            ELSE 'Unknown'
+        END as visa_category,
         
-        -- Remote work detection
+        -- Confidence (placeholder - Agent 3 provides real confidence)
         CASE
-            WHEN LOWER(location) LIKE '%remote%' THEN TRUE
-            WHEN LOWER(description) LIKE '%remote%' OR LOWER(description) LIKE '%work from home%' THEN TRUE
-            ELSE FALSE
-        END AS is_remote,
+            WHEN LOWER(description) LIKE '%cpt eligible%' THEN 0.95
+            WHEN LOWER(description) LIKE '%sponsor h-1b%' THEN 0.90
+            WHEN LOWER(description) LIKE '%citizenship required%' THEN 0.95
+            ELSE 0.70
+        END as classification_confidence,
         
-        -- Extract skills using Cortex
-        SNOWFLAKE.CORTEX.COMPLETE(
-            'mistral-large',
-            CONCAT(
-                'Extract the top 5 technical skills mentioned in this job description. ',
-                'Return as comma-separated list. Description: ',
-                LEFT(description, 1000)
-            )
-        ) AS extracted_skills
+        -- Signals found
+        ARRAY_CONSTRUCT(
+            CASE WHEN LOWER(title) LIKE '%intern%' THEN 'intern' END,
+            CASE WHEN LOWER(description) LIKE '%cpt%' THEN 'cpt' END,
+            CASE WHEN LOWER(description) LIKE '%sponsor%' THEN 'sponsor' END
+        ) as classification_signals,
         
-    FROM jobs
+        CURRENT_TIMESTAMP() as classified_at
+        
+    FROM unclassified_jobs
 )
 
-SELECT * FROM classified
+SELECT * FROM classifications
+WHERE visa_category != 'Unknown'

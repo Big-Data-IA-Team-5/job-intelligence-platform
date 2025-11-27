@@ -107,6 +107,7 @@ class TestAgent4Matcher(unittest.TestCase):
                 'TITLE': 'Software Engineer',
                 'COMPANY': 'Test Corp',
                 'DESCRIPTION': 'Python and SQL required',
+                'QUALIFICATIONS': 'Required: Python, SQL, 2+ years experience',
                 'LOCATION': 'Boston, MA',
                 'VISA_CATEGORY': 'OPT',
                 'H1B_SPONSOR': True
