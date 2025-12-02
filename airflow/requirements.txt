@@ -1,0 +1,7 @@
+# Airflow dependencies
+apache-airflow==2.7.3
+snowflake-connector-python
+boto3
+requests
+beautifulsoup4
+python-jobspy

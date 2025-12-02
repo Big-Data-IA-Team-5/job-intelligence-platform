@@ -1,0 +1,12 @@
+{
+  "scraped_at": "2025-12-01T20:03:50.115708",
+  "cutoff_date": "2025-11-24T20:00:29.685991",
+  "time_range_hours": 168,
+  "total_jobs": 302,
+  "total_categories": 20,
+  "successful_categories": 1,
+  "failed_categories": 0,
+  "category_breakdown": {
+    "Software_Engineering": 302
+  }
+}
