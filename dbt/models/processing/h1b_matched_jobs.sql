@@ -1,6 +1,5 @@
 -- H1B Matched Jobs
--- Matches jobs with H1B sponsorship data
-
+-- Matches jobs with H1B sponsorship data from raw LCA records
 {{
     config(
         materialized='table',
@@ -12,36 +11,39 @@ WITH jobs AS (
     SELECT * FROM {{ ref('dedup_jobs') }}
 ),
 
-h1b_data AS (
-    SELECT DISTINCT
-        employer_name,
-        job_title,
-        worksite_city,
-        worksite_state,
-        prevailing_wage,
-        COUNT(*) as h1b_application_count
-    FROM {{ source('raw', 'h1b_data') }}
-    WHERE 
-        case_status = 'Certified'
-        AND fiscal_year >= YEAR(CURRENT_DATE()) - 3
-    GROUP BY 1, 2, 3, 4, 5
+-- Aggregate H-1B data by employer
+h1b_aggregated AS (
+    SELECT 
+        UPPER(TRIM(employer_name)) as employer_name_clean,
+        employer_name as employer_name_original,
+        COUNT(*) as total_petitions,
+        SUM(CASE WHEN case_status = 'Certified' THEN 1 ELSE 0 END) as certified_petitions,
+        AVG(CASE WHEN case_status = 'Certified' THEN 1.0 ELSE 0.0 END) as avg_approval_rate,
+        MAX(worksite_city) as h1b_city,
+        MAX(worksite_state) as h1b_state
+    FROM {{ source('raw', 'h1b_raw') }}
+    WHERE employer_name IS NOT NULL
+    GROUP BY 1, 2
 ),
 
+-- Match jobs to H-1B sponsors
 matched AS (
     SELECT
         j.*,
-        h.employer_name AS h1b_employer_name,
-        h.job_title AS h1b_job_title,
-        h.prevailing_wage,
-        h.h1b_application_count,
+        h.employer_name_original AS h1b_employer_name,
+        h.h1b_city,
+        h.h1b_state,
+        h.total_petitions,
+        h.avg_approval_rate,
         CASE 
-            WHEN h.employer_name IS NOT NULL THEN TRUE 
+            WHEN h.employer_name_clean IS NOT NULL THEN TRUE 
             ELSE FALSE 
-        END AS likely_sponsors_h1b
+        END AS h1b_sponsor
     FROM jobs j
-    LEFT JOIN h1b_data h
-        ON LOWER(j.company_name) LIKE LOWER('%' || h.employer_name || '%')
-        AND LOWER(j.title) LIKE LOWER('%' || SPLIT_PART(h.job_title, ' ', 1) || '%')
+    LEFT JOIN h1b_aggregated h
+        ON UPPER(TRIM(j.company)) = h.employer_name_clean
+        OR UPPER(TRIM(j.company)) LIKE h.employer_name_clean || '%'
+        OR h.employer_name_clean LIKE UPPER(TRIM(j.company)) || '%'
 )
 
 SELECT * FROM matched

@@ -1,6 +1,5 @@
 -- Deduplicated jobs view
 -- Keeps the most recent scrape of each job
-
 {{
     config(
         materialized='view',
@@ -22,11 +21,14 @@ SELECT
     job_id,
     source,
     title,
-    company_name,
+    company,
     location,
     description,
+    snippet,
     posted_date,
-    salary_range,
+    salary_min,
+    salary_max,
+    salary_text,
     job_type,
     url,
     scraped_at,

@@ -1,0 +1,45 @@
+version: 2
+
+sources:
+  - name: raw
+    database: job_intelligence
+    schema: raw
+    tables:
+      - name: jobs_raw
+        description: "Raw job postings scraped from various sources"
+        columns:
+          - name: job_id
+            description: "Unique job identifier"
+          - name: url
+            description: "Job posting URL"
+          - name: title
+            description: "Job title"
+          - name: company
+            description: "Company name"
+          - name: location
+            description: "Job location"
+          - name: description
+            description: "Full job description"
+          - name: salary_min
+            description: "Minimum salary"
+          - name: salary_max
+            description: "Maximum salary"
+          - name: job_type
+            description: "Type of job (Full-Time, Part-Time, etc.)"
+          - name: scraped_at
+            description: "When the job was scraped"
+          - name: source
+            description: "Source of the job posting"
+      
+      - name: h1b_raw
+        description: "H-1B visa sponsorship data"
+        identifier: h1b_raw
+        columns:
+          - name: employer_name
+            description: "Company name"
+          - name: fiscal_year
+            description: "Fiscal year"
+          - name: initial_approvals
+            description: "Number of initial H-1B approvals"
+          - name: continuing_approvals  
+            description: "Number of continuing H-1B approvals"

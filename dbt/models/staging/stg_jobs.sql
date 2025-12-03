@@ -1,6 +1,5 @@
 -- Staging: Initial view of raw jobs data
 -- Performs basic cleaning and type casting
-
 {{
     config(
         materialized='view',
@@ -12,19 +11,22 @@ SELECT
     job_id,
     source,
     TRIM(title) AS title,
-    TRIM(company_name) AS company_name,
+    TRIM(company) AS company,
     TRIM(location) AS location,
     description,
+    snippet,
     posted_date,
-    salary_range,
+    salary_min,
+    salary_max,
+    salary_text,
     job_type,
     url,
     scraped_at,
     CURRENT_TIMESTAMP() AS processed_at
-FROM {{ source('raw', 'jobs') }}
+FROM {{ source('raw', 'jobs_raw') }}
 WHERE 
     job_id IS NOT NULL
     AND title IS NOT NULL
-    AND company_name IS NOT NULL
-    -- Filter out jobs older than configured days
-    AND posted_date >= DATEADD(day, -{{ var('max_job_age_days', 90) }}, CURRENT_DATE())
+    AND company IS NOT NULL
+    -- Only get recent jobs (last 90 days)
+    AND scraped_at >= DATEADD(day, -90, CURRENT_DATE())

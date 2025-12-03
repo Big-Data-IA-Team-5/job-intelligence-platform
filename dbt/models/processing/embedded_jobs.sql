@@ -25,7 +25,7 @@ embedded AS (
             '{{ var("embedding_model") }}',
             CONCAT(
                 title, '. ',
-                company_name, '. ',
+                company, '. ',
                 LEFT(description, 2000)
             )
         ) AS description_embedding,
