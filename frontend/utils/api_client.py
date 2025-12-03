@@ -11,7 +11,6 @@ class APIClient:
     
     def __init__(self, base_url: Optional[str] = None):
         self.base_url = base_url or os.getenv("BACKEND_URL", "http://localhost:8000")
-        self.api_prefix = "/api/v1"
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json"
@@ -21,27 +20,39 @@ class APIClient:
         """Build full URL for endpoint"""
         if not endpoint.startswith("/"):
             endpoint = f"/{endpoint}"
-        return f"{self.base_url}{self.api_prefix}{endpoint}"
+        
+        # If endpoint already has /api prefix, use as-is
+        # Otherwise, add /api/v1 prefix for analytics endpoints
+        if endpoint.startswith("/api/"):
+            return f"{self.base_url}{endpoint}"
+        else:
+            return f"{self.base_url}/api/v1{endpoint}"
     
     def get(self, endpoint: str, params: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
         """Make GET request"""
         try:
-            response = self.session.get(self._url(endpoint), params=params)
+            response = self.session.get(self._url(endpoint), params=params, timeout=30)
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.HTTPError as e:
+            print(f"GET request failed with HTTP error: {e.response.status_code}")
+            return {"error": str(e), "status_code": e.response.status_code}
         except requests.exceptions.RequestException as e:
             print(f"GET request failed: {str(e)}")
-            return None
+            return {"error": str(e)}
     
     def post(self, endpoint: str, json: Optional[Dict] = None, data: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
         """Make POST request"""
         try:
-            response = self.session.post(self._url(endpoint), json=json, data=data)
+            response = self.session.post(self._url(endpoint), json=json, data=data, timeout=30)
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.HTTPError as e:
+            print(f"POST request failed with HTTP error: {e.response.status_code} - {e.response.text}")
+            return {"error": str(e), "status_code": e.response.status_code, "detail": e.response.text}
         except requests.exceptions.RequestException as e:
             print(f"POST request failed: {str(e)}")
-            return None
+            return {"error": str(e)}
     
     def put(self, endpoint: str, json: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
         """Make PUT request"""

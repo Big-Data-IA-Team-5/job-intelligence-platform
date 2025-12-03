@@ -5,7 +5,7 @@ Job Intelligence Platform API
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routes import health, search, classify, resume
+from app.routes import health, search, classify, resume, analytics
 import logging
 
 # Configure logging
@@ -37,6 +37,7 @@ app.include_router(health.router)
 app.include_router(search.router)
 app.include_router(classify.router)
 app.include_router(resume.router)
+app.include_router(analytics.router, prefix="/api")
 
 @app.get("/")
 async def root():
@@ -50,7 +51,8 @@ async def root():
             "search": "/api/search",
             "classify": "/api/classify",
             "resume_match": "/api/resume/match",
-            "resume_upload": "/api/resume/upload"
+            "resume_upload": "/api/resume/upload",
+            "analytics": "/api/v1/analytics"
         }
     }
 

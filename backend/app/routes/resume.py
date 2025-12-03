@@ -57,26 +57,68 @@ async def match_resume(request: MatchRequest):
             resume_text=request.resume_text
         )
         
-        # Convert to response model
-        profile = ResumeProfile(**result['profile'])
+        # Convert to response model - handle skills structure
+        profile_data = result['profile']
         
-        matches = [
-            JobMatch(
-                job_id=m.get('job_id') or m.get('JOB_ID', ''),
-                title=m.get('title') or m.get('TITLE', ''),
-                company=m.get('company') or m.get('COMPANY', ''),
-                location=m.get('location') or m.get('LOCATION', ''),
-                overall_score=m.get('overall_score', 0.0),
-                skills_score=m.get('skills_score', 0.0),
-                experience_score=m.get('experience_score', 0.0),
-                visa_score=m.get('visa_score', 0.0),
-                location_score=m.get('location_score', 0.0),
+        # If technical_skills is a dict, flatten it to a list
+        if isinstance(profile_data.get('technical_skills'), dict):
+            tech_skills = []
+            for category, skills in profile_data['technical_skills'].items():
+                if isinstance(skills, list):
+                    tech_skills.extend(skills)
+                else:
+                    tech_skills.append(str(skills))
+            profile_data['technical_skills'] = tech_skills
+        
+        # Same for soft_skills if it's a dict
+        if isinstance(profile_data.get('soft_skills'), dict):
+            soft_skills = []
+            for category, skills in profile_data['soft_skills'].items():
+                if isinstance(skills, list):
+                    soft_skills.extend(skills)
+                else:
+                    soft_skills.append(str(skills))
+            profile_data['soft_skills'] = soft_skills
+        
+        profile = ResumeProfile(**profile_data)
+        
+        # Build matches with deduplication
+        seen_jobs = set()
+        matches = []
+        
+        for m in result['top_matches']:
+            job_id = m.get('job_id') or m.get('JOB_ID', '')
+            title = m.get('title') or m.get('TITLE', '')
+            company = m.get('company') or m.get('COMPANY', '')
+            location = m.get('location') or m.get('LOCATION', '')
+            
+            # Create unique key: use job_id if available, otherwise title+company+location
+            if job_id:
+                unique_key = f"id:{job_id}"
+            else:
+                unique_key = f"{title}|{company}|{location}".lower().strip()
+            
+            # Skip duplicates
+            if unique_key in seen_jobs:
+                logger.info(f"Skipping duplicate job: {title} at {company}")
+                continue
+            
+            seen_jobs.add(unique_key)
+            
+            matches.append(JobMatch(
+                job_id=job_id,
+                title=title,
+                company=company,
+                location=location,
+                overall_score=m.get('overall_score', 0.0) / 100.0,  # Normalize from percentage
+                skills_score=m.get('skills_score', 0.0) / 100.0,
+                experience_score=m.get('experience_score', 0.0) / 100.0,
+                visa_score=m.get('visa_score', 0.0) / 100.0,
+                location_score=m.get('location_score', 0.0) / 100.0,
                 match_reasoning=m.get('match_reasoning', ''),
                 url=m.get('url') or m.get('URL', ''),
                 visa_category=m.get('visa_category') or m.get('VISA_CATEGORY')
-            )
-            for m in result['top_matches']
-        ]
+            ))
         
         return MatchResponse(
             status="success",

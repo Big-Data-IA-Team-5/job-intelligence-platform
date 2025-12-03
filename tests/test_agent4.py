@@ -86,9 +86,9 @@ class TestAgent4Matcher(unittest.TestCase):
         self.assertIsInstance(jobs, list)
         # Jobs may be empty if database has no matching jobs
         for job in jobs:
-            self.assertIn('JOB_ID', job)
-            self.assertIn('TITLE', job)
-            self.assertIn('VISA_CATEGORY', job)
+            self.assertIn('job_id', job)
+            self.assertIn('title', job)
+            self.assertIn('visa_category', job)
     
     def test_rerank_jobs(self):
         """Test job re-ranking with scores."""
@@ -121,7 +121,7 @@ class TestAgent4Matcher(unittest.TestCase):
             match = ranked[0]
             self.assertIn('overall_score', match)
             self.assertIn('skills_score', match)
-            self.assertIn('reasoning', match)
+            self.assertIn('match_reasoning', match)
             self.assertGreaterEqual(match['overall_score'], 0)
             self.assertLessEqual(match['overall_score'], 100)
     
