@@ -1,138 +1,153 @@
 """
-Resume Routes
+Resume Matching Endpoint - Agent 4 Integration
 """
-from fastapi import APIRouter, HTTPException, UploadFile, File
-from app.models.schemas import (
-    ResumeUploadRequest, ResumeMatchRequest, 
-    ResumeMatchResponse, JobMatch, JobDetail
+from fastapi import APIRouter, HTTPException
+from app.models.resume import (
+    MatchRequest, MatchResponse, UploadRequest, UploadResponse,
+    ResumeProfile, JobMatch
 )
-from app.utils.snowflake_client import get_snowflake_client
+from app.models.response import ErrorResponse
+from app.utils.agent_wrapper import AgentManager
+import logging
+import uuid
 
-router = APIRouter()
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/resume", tags=["Resume Matching"])
 
-
-@router.post("/upload")
-async def upload_resume(request: ResumeUploadRequest):
+@router.post("/match",
+    response_model=MatchResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        500: {"model": ErrorResponse}
+    })
+async def match_resume(request: MatchRequest):
     """
-    Upload and process a resume
+    Match resume to top jobs
+    
+    Uses Agent 4 to:
+    1. Extract skills, experience, preferences from resume
+    2. Find matching jobs in database
+    3. Score and rank top 10 matches
+    
+    **Example Request:**
+    ```json
+    {
+      "resume_text": "John Doe\\n5 years Python experience...\\nMaster's CS...",
+      "user_id": "user_123"
+    }
+    ```
+    
+    **Returns:**
+    - Extracted profile (skills, experience, education)
+    - Top 10 job matches with scores
+    - Match reasoning for each job
     """
+    
+    matcher = None
     try:
-        client = get_snowflake_client()
+        # Generate resume ID
+        resume_id = f"resume_{uuid.uuid4().hex[:8]}"
         
-        # Generate embedding for resume
-        embed_query = """
-        SELECT SNOWFLAKE.CORTEX.EMBED_TEXT_768('e5-base-v2', %s) AS resume_embedding
-        """
+        # Initialize Agent 4
+        matcher = AgentManager.get_matcher()
         
-        embedding_df = client.execute_query(embed_query, [request.resume_text])
-        resume_embedding = embedding_df['RESUME_EMBEDDING'].iloc[0]
-        
-        # Extract skills using Cortex
-        skills_query = """
-        SELECT SNOWFLAKE.CORTEX.COMPLETE(
-            'mistral-large',
-            CONCAT('Extract top 10 technical skills from this resume as comma-separated list: ', %s)
-        ) AS skills
-        """
-        
-        skills_df = client.execute_query(skills_query, [request.resume_text[:2000]])
-        skills = skills_df['SKILLS'].iloc[0]
-        
-        # Store resume
-        insert_query = """
-        INSERT INTO MARTS.USER_RESUMES (user_id, resume_text, resume_embedding, skills)
-        VALUES (%s, %s, %s, %s)
-        """
-        
-        client.execute_query(
-            insert_query, 
-            [request.user_id, request.resume_text, resume_embedding, skills]
+        # Match
+        result = matcher.match_resume(
+            resume_id=resume_id,
+            resume_text=request.resume_text
         )
         
-        return {
-            "message": "Resume uploaded successfully",
-            "user_id": request.user_id,
-            "extracted_skills": skills
-        }
+        # Convert to response model
+        profile = ResumeProfile(**result['profile'])
         
+        matches = [
+            JobMatch(
+                job_id=m.get('job_id') or m.get('JOB_ID', ''),
+                title=m.get('title') or m.get('TITLE', ''),
+                company=m.get('company') or m.get('COMPANY', ''),
+                location=m.get('location') or m.get('LOCATION', ''),
+                overall_score=m.get('overall_score', 0.0),
+                skills_score=m.get('skills_score', 0.0),
+                experience_score=m.get('experience_score', 0.0),
+                visa_score=m.get('visa_score', 0.0),
+                location_score=m.get('location_score', 0.0),
+                match_reasoning=m.get('match_reasoning', ''),
+                url=m.get('url') or m.get('URL', ''),
+                visa_category=m.get('visa_category') or m.get('VISA_CATEGORY')
+            )
+            for m in result['top_matches']
+        ]
+        
+        return MatchResponse(
+            status="success",
+            profile=profile,
+            top_matches=matches,
+            total_candidates=result['total_candidates'],
+            resume_id=resume_id
+        )
+    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Matching error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Resume matching failed: {str(e)}"
+        )
+    
+    finally:
+        if matcher:
+            matcher.close()
 
-
-@router.post("/match", response_model=ResumeMatchResponse)
-async def match_resume(request: ResumeMatchRequest):
+@router.post("/upload",
+    response_model=UploadResponse,
+    responses={
+        400: {"model": ErrorResponse},
+        500: {"model": ErrorResponse}
+    })
+async def upload_resume(request: UploadRequest):
     """
-    Find matching jobs for a resume
+    Upload resume (stores in Snowflake)
+    
+    **Example Request:**
+    ```json
+    {
+      "resume_text": "Full resume text...",
+      "file_name": "john_doe_resume.pdf",
+      "user_id": "user_123"
+    }
+    ```
+    
+    **Returns:**
+    - Resume ID
+    - Upload status
     """
+    
+    matcher = None
     try:
-        client = get_snowflake_client()
+        # Generate resume ID
+        resume_id = f"resume_{uuid.uuid4().hex[:8]}"
         
-        # Get resume embedding
-        resume_query = """
-        SELECT resume_embedding 
-        FROM MARTS.USER_RESUMES 
-        WHERE resume_id = %s
-        """
+        # Initialize Agent 4
+        matcher = AgentManager.get_matcher()
         
-        resume_df = client.execute_query(resume_query, [request.resume_id])
-        
-        if resume_df.empty:
-            raise HTTPException(status_code=404, detail="Resume not found")
-        
-        resume_embedding = resume_df['RESUME_EMBEDDING'].iloc[0]
-        
-        # Find matching jobs
-        match_query = """
-        SELECT 
-            job_id, source, title, company_name, location, description,
-            posted_date, url, job_type, salary_range, seniority_level,
-            job_category, extracted_skills, is_remote, likely_sponsors_h1b,
-            h1b_employer_name, h1b_application_count, prevailing_wage,
-            VECTOR_COSINE_SIMILARITY(description_embedding, %s) AS similarity_score
-        FROM MARTS.JOB_INTELLIGENCE_MART
-        WHERE posted_date >= CURRENT_DATE - 30
-            AND VECTOR_COSINE_SIMILARITY(description_embedding, %s) >= %s
-        ORDER BY similarity_score DESC
-        LIMIT %s
-        """
-        
-        df = client.execute_query(
-            match_query, 
-            [resume_embedding, resume_embedding, request.min_similarity, request.top_k]
+        # Store resume (simplified - just extract profile)
+        result = matcher.match_resume(
+            resume_id=resume_id,
+            resume_text=request.resume_text
         )
         
-        matches = []
-        for _, row in df.iterrows():
-            job = JobDetail(**{k: v for k, v in row.items() if k != 'similarity_score'})
-            matches.append(JobMatch(job=job, similarity_score=row['similarity_score']))
-        
-        return ResumeMatchResponse(
-            matches=matches,
-            resume_id=request.resume_id
+        return UploadResponse(
+            status="success",
+            resume_id=resume_id,
+            message="Resume uploaded and processed successfully"
         )
-        
+    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/user/{user_id}")
-async def get_user_resumes(user_id: str):
-    """
-    Get all resumes for a user
-    """
-    try:
-        client = get_snowflake_client()
-        
-        query = """
-        SELECT resume_id, skills, uploaded_at
-        FROM MARTS.USER_RESUMES
-        WHERE user_id = %s
-        ORDER BY uploaded_at DESC
-        """
-        
-        df = client.execute_query(query, [user_id])
-        
-        return {"resumes": df.to_dict('records')}
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Upload error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Resume upload failed: {str(e)}"
+        )
+    
+    finally:
+        if matcher:
+            matcher.close()

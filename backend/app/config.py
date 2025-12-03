@@ -1,40 +1,45 @@
 """
-Application Configuration
+FastAPI Configuration
+Loads environment variables and settings
 """
-from pydantic_settings import BaseSettings
-from typing import Optional
+import os
+from dotenv import load_dotenv
+from pathlib import Path
 
+# Load environment variables
+env_path = Path(__file__).parents[2] / 'config' / '.env'
+load_dotenv(env_path)
 
-class Settings(BaseSettings):
-    """Application settings"""
+class Settings:
+    # App Info
+    APP_NAME = "Job Intelligence Platform API"
+    VERSION = "1.0.0"
+    DESCRIPTION = "AI-powered job search platform for international students"
     
-    # App config
-    APP_NAME: str = "job-intelligence-platform"
-    ENVIRONMENT: str = "development"
-    API_V1_PREFIX: str = "/api/v1"
+    # Server
+    HOST = "0.0.0.0"
+    PORT = 8000
     
-    # Server config
-    BACKEND_HOST: str = "0.0.0.0"
-    BACKEND_PORT: int = 8000
+    # Snowflake Connection
+    SNOWFLAKE_ACCOUNT = os.getenv('SNOWFLAKE_ACCOUNT')
+    SNOWFLAKE_USER = os.getenv('SNOWFLAKE_USER')
+    SNOWFLAKE_PASSWORD = os.getenv('SNOWFLAKE_PASSWORD')
+    SNOWFLAKE_DATABASE = os.getenv('SNOWFLAKE_DATABASE', 'job_intelligence')
+    SNOWFLAKE_WAREHOUSE = os.getenv('SNOWFLAKE_WAREHOUSE', 'compute_wh')
+    SNOWFLAKE_SCHEMA = os.getenv('SNOWFLAKE_SCHEMA', 'processed')
+    SNOWFLAKE_ROLE = os.getenv('SNOWFLAKE_ROLE', 'ACCOUNTADMIN')
     
-    # Snowflake config
-    SNOWFLAKE_ACCOUNT: str
-    SNOWFLAKE_USER: str
-    SNOWFLAKE_PASSWORD: str
-    SNOWFLAKE_WAREHOUSE: str = "COMPUTE_WH"
-    SNOWFLAKE_DATABASE: str = "JOB_INTELLIGENCE"
-    SNOWFLAKE_SCHEMA: str = "MARTS"
-    SNOWFLAKE_ROLE: str = "JOB_APP_ROLE"
+    # Agent Paths
+    AGENT_BASE_PATH = Path(__file__).parents[2] / 'snowflake' / 'agents'
     
-    # API Keys
-    OPENAI_API_KEY: Optional[str] = None
+    # CORS
+    CORS_ORIGINS = [
+        "http://localhost:8501",  # Streamlit
+        "http://localhost:3000",  # React (if needed)
+    ]
     
-    # Logging
-    LOG_LEVEL: str = "INFO"
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-
+    # Limits
+    MAX_SEARCH_RESULTS = 100
+    MAX_RESUME_SIZE_MB = 5
 
 settings = Settings()

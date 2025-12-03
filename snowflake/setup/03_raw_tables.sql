@@ -69,76 +69,32 @@ CREATE INDEX IF NOT EXISTS idx_jobs_h1b ON jobs_raw(h1b_sponsored);
 -- ============================================
 
 CREATE OR REPLACE TABLE h1b_raw (
-    -- Case Information
+    -- Primary identifier (matches FY2025 Q3 schema)
     case_number STRING PRIMARY KEY,
+    
+    -- Basic info
     case_status STRING,              -- CERTIFIED, DENIED, WITHDRAWN
-    received_date DATE,
-    decision_date DATE,
-    original_cert_date DATE,
-    visa_class STRING,               -- H-1B, H-1B1, E-3
-    
-    -- Job Information (CRITICAL FOR MATCHING!)
-    job_title STRING NOT NULL,
-    soc_code STRING,
-    soc_title STRING,
-    full_time_position STRING,       -- Y/N
-    begin_date DATE,
-    end_date DATE,
-    total_worker_positions NUMBER,
-    
-    -- Employment Type
-    new_employment STRING,
-    continued_employment STRING,
-    change_previous_employment STRING,
-    new_concurrent_employment STRING,
-    change_employer STRING,
-    amended_petition STRING,
-    
-    -- Employer Information
     employer_name STRING NOT NULL,
-    trade_name_dba STRING,
-    employer_address1 STRING,
-    employer_city STRING,
-    employer_state STRING,
-    employer_postal_code STRING,
-    employer_country STRING,
-    employer_phone STRING,
-    employer_fein STRING,            -- Tax ID for exact matching
-    naics_code STRING,
+    job_title STRING,
+    soc_title STRING,
     
-    -- Worksite (Actual Job Location)
-    worksite_address1 STRING,
+    -- Location (actual job location)
     worksite_city STRING,
     worksite_state STRING,
-    worksite_county STRING,
-    worksite_postal_code STRING,
-    worksite_workers NUMBER,
     
-    -- Wage Information (GOLD DATA!)
+    -- Salary (CRITICAL for matching!)
     wage_rate_of_pay_from NUMBER(10,2),
     wage_rate_of_pay_to NUMBER(10,2),
     wage_unit_of_pay STRING,         -- Year, Hour, Week, Month
-    prevailing_wage NUMBER(10,2),
-    pw_unit_of_pay STRING,
-    pw_wage_level STRING,            -- I, II, III, IV (experience level)
-    pw_tracking_number STRING,
     
-    -- Risk Flags
-    h_1b_dependent STRING,           -- Y/N (high visa dependency)
+    -- Risk flags (NO underscore - matches upload code!)
+    h1b_dependent STRING,            -- Y/N (high visa dependency)
     willful_violator STRING,         -- Y/N (immigration violations)
-    
-    -- Attorney Information (UNIQUE!)
-    agent_representing_employer STRING,   -- Y/N
-    agent_attorney_last_name STRING,
-    agent_attorney_first_name STRING,
-    agent_attorney_email_address STRING,
-    lawfirm_name_business_name STRING,
     
     -- Metadata
     loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
-    data_source STRING DEFAULT 'USCIS_FY2025_Q3',
     
-    COMMENT = 'H-1B LCA Data FY2025 Q3 - Latest USCIS disclosure (90+ fields)'
+    COMMENT = 'H-1B LCA Data FY2025 Q3 - Simplified schema matching upload_to_snowflake()'
 );
 
 -- Indexes for performance
