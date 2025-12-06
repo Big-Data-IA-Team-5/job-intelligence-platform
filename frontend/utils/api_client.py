@@ -48,8 +48,15 @@ class APIClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.HTTPError as e:
-            print(f"POST request failed with HTTP error: {e.response.status_code} - {e.response.text}")
-            return {"error": str(e), "status_code": e.response.status_code, "detail": e.response.text}
+            # Try to parse error response as JSON (FastAPI returns JSON errors)
+            try:
+                error_data = e.response.json()
+                print(f"POST request failed with HTTP {e.response.status_code}: {error_data}")
+                return error_data  # Return parsed error (contains 'detail' field)
+            except:
+                # Fallback if response is not JSON
+                print(f"POST request failed with HTTP error: {e.response.status_code} - {e.response.text}")
+                return {"error": str(e), "status_code": e.response.status_code, "detail": e.response.text}
         except requests.exceptions.RequestException as e:
             print(f"POST request failed: {str(e)}")
             return {"error": str(e)}

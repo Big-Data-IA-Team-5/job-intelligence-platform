@@ -1,19 +1,23 @@
 """
 Airflow DAG for Internship Airtable Scraper
 Scrapes all internship categories from intern-list.com Airtable bases
+Pipeline: Scrape -> S3 Upload -> Snowflake Upload
 """
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 from datetime import datetime, timedelta
 import sys
 import os
+import json
 
-# Add parent directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+# Add parent directory to path for Docker
+sys.path.insert(0, '/opt/airflow')
 
-from scrapers.Internship_Airtable_scraper import InternshipAirtableScraper
+# Import only lightweight modules at top level
+# Heavy imports moved inside task functions to prevent DAG import timeout
 
 # Default arguments
 default_args = {
@@ -23,26 +27,32 @@ default_args = {
     'email_on_retry': False,
     'retries': 2,
     'retry_delay': timedelta(minutes=10),
-    'execution_timeout': timedelta(hours=2),  # Prevent zombie processes
+    'execution_timeout': timedelta(hours=2),
 }
 
-def run_internship_scraper(**context):
+def scrape_internship_jobs(**context):
     """
-    Run the comprehensive internship Airtable scraper
-    Scrapes all 20 internship categories from intern-list.com
+    Scrape all internship categories from Airtable
     """
+    # Lazy imports to prevent DAG import timeout
+    from scrapers.Internship_Airtable_scraper import InternshipAirtableScraper
+    from dags.common.s3_utils import cleanup_old_s3_files
+    
     print("=" * 80)
-    print("STARTING INTERNSHIP AIRTABLE SCRAPER")
+    print("STEP 1: SCRAPING INTERNSHIPS FROM AIRTABLE")
     print("=" * 80)
     
-    # Configuration
-    hours_lookback = 720  # 30 days
-    num_workers = 5       # 5 parallel workers
+    # Clean up old S3 files first (files older than 30 days)
+    print("\nCleaning up old S3 files...")
+    cleanup_old_s3_files(prefix='raw/airtable/internships/', days_to_keep=30)
+    
+    # Configuration - PRODUCTION OPTIMIZED
+    hours_lookback = 96   # 4 days (recent jobs only)
+    num_workers = 5       # 5 parallel workers for faster scraping (Selenium supports 20 max sessions)
     
     print(f"\n⚙️  Configuration:")
-    print(f"   Time window: Last {hours_lookback} hours ({hours_lookback/24:.1f} days)")
+    print(f"   Time window: Last {hours_lookback} hours ({hours_lookback/24:.0f} days)")
     print(f"   Workers: {num_workers}")
-    print(f"   Output: airflow/scraped_jobs/")
     
     # Initialize scraper
     scraper = InternshipAirtableScraper(
@@ -55,96 +65,147 @@ def run_internship_scraper(**context):
     print(f"\n🚀 Starting internship scraper...")
     results = scraper.scrape_all_categories()
     
+    # Collect all jobs
+    all_jobs = scraper.all_jobs
+    
     # Summary
-    total_jobs = sum(r.get('job_count', 0) for r in results.values())
+    total_jobs = len(all_jobs)
     successful = sum(1 for r in results.values() if r.get('status') == 'success')
     failed = sum(1 for r in results.values() if r.get('status') == 'failed')
     
     print("\n" + "=" * 80)
-    print("INTERNSHIP SCRAPING COMPLETED")
+    print("SCRAPING COMPLETED")
     print("=" * 80)
     print(f"\n📊 Results:")
     print(f"   Total internships: {total_jobs}")
     print(f"   Successful categories: {successful}/{len(results)}")
     print(f"   Failed categories: {failed}/{len(results)}")
-    print(f"   Time window: Last {hours_lookback} hours")
     
-    # Push metrics to XCom
-    context['ti'].xcom_push(key='total_internships', value=total_jobs)
-    context['ti'].xcom_push(key='successful_categories', value=successful)
-    context['ti'].xcom_push(key='failed_categories', value=failed)
-    context['ti'].xcom_push(key='hours_lookback', value=hours_lookback)
+    # Push to XCom for next tasks
+    context['ti'].xcom_push(key='internship_jobs', value=all_jobs)
+    context['ti'].xcom_push(key='job_count', value=total_jobs)
     
-    # Return summary
-    return {
-        'total_internships': total_jobs,
-        'successful_categories': successful,
-        'failed_categories': failed,
-        'time_window_hours': hours_lookback
-    }
+    return total_jobs
+
+def upload_internship_jobs_to_s3(**context):
+    """
+    Upload scraped internship jobs to S3
+    """
+    from dags.common.s3_utils import upload_to_s3
+    
+    print("\n" + "=" * 80)
+    print("STEP 2: UPLOADING TO S3")
+    print("=" * 80)
+    
+    # Get jobs from previous task
+    internship_jobs = context['ti'].xcom_pull(key='internship_jobs', task_ids='scrape_internship_jobs')
+    
+    if not internship_jobs:
+        print("⚠️  No jobs to upload")
+        return None
+    
+    # Upload to S3
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    s3_key = f"raw/airtable/internships/internship_jobs_{timestamp}.json"
+    s3_path = upload_to_s3(internship_jobs, s3_key)
+    
+    print(f"✅ Uploaded {len(internship_jobs)} jobs to: {s3_path}")
+    
+    context['ti'].xcom_push(key='s3_path', value=s3_path)
+    return s3_path
+
+def upload_internship_jobs_to_snowflake(**context):
+    """
+    Upload scraped internship jobs to Snowflake
+    """
+    from dags.common.snowflake_utils import upload_to_snowflake
+    
+    print("\n" + "=" * 80)
+    print("STEP 3: UPLOADING TO SNOWFLAKE")
+    print("=" * 80)
+    
+    # Get jobs from scraping task
+    internship_jobs = context['ti'].xcom_pull(key='internship_jobs', task_ids='scrape_internship_jobs')
+    
+    if not internship_jobs:
+        print("⚠️  No jobs to upload")
+        return 0
+    
+    # Upload to Snowflake
+    rows = upload_to_snowflake(
+        data=internship_jobs,
+        table='jobs_raw',
+        database='job_intelligence',
+        schema='raw'
+    )
+    
+    print(f"✅ Inserted {rows} rows to Snowflake")
+    return rows
+
+def print_pipeline_summary(**context):
+    """Print comprehensive pipeline summary"""
+    print("\n" + "=" * 80)
+    print("🎯 INTERNSHIP JOBS PIPELINE SUMMARY")
+    print("=" * 80)
+    
+    job_count = context['ti'].xcom_pull(key='job_count', task_ids='scrape_internship_jobs') or 0
+    s3_path = context['ti'].xcom_pull(key='s3_path', task_ids='upload_to_s3') or 'N/A'
+    
+    print(f"\n📊 Results:")
+    print(f"   ✓ Internships scraped: {job_count}")
+    print(f"   ✓ S3 path: {s3_path}")
+    print(f"   ✓ Snowflake table: job_intelligence.raw.jobs_raw")
+    print(f"\n✅ PIPELINE COMPLETED SUCCESSFULLY!")
+    print("=" * 80)
 
 # Create DAG
 with DAG(
     'internship_scraper',
     default_args=default_args,
-    description='Internship Airtable scraper - scrapes all 20 internship categories from intern-list.com',
-    schedule_interval='0 2 * * *',  # Run daily at 2 AM
-    start_date=days_ago(1),
+    description='Internship scraper pipeline: Scrape -> S3 -> Snowflake',
+    schedule_interval='0 4 * * *',  # Run daily at 4:00 AM UTC
+    start_date=datetime(2025, 12, 5, 2, 0),  # Start today at 2 AM
     catchup=False,
-    tags=['scraper', 'airtable', 'internships', 'intern-list'],
+    tags=['scraper', 'airtable', 'internships', 'intern-list', 'pipeline'],
 ) as dag:
     
-    # Task: Run internship Airtable scraper
-    scrape_internships = PythonOperator(
+    # Task 1: Scrape internship jobs
+    scrape_task = PythonOperator(
         task_id='scrape_internship_jobs',
-        python_callable=run_internship_scraper,
+        python_callable=scrape_internship_jobs,
         provide_context=True,
-        execution_timeout=timedelta(hours=2),  # Max 2 hours
-        doc_md="""
-        ## Internship Airtable Scraper
-        
-        This task runs the comprehensive internship scraper that:
-        - Scrapes **20 internship categories** from intern-list.com
-        - Uses **Selenium** with deep scrolling (up to 100 scrolls per category)
-        - Runs **5 parallel workers** for efficiency
-        - Collects internships from the **last 30 days**
-        - Saves output to `airflow/scraped_jobs/` as JSON, CSV, and Markdown
-        
-        ### Categories Scraped:
-        - Software Engineering
-        - Data Analysis
-        - Machine Learning & AI
-        - Product Management
-        - Accounting & Finance
-        - Engineering & Development
-        - Business Analyst
-        - Marketing
-        - Cybersecurity
-        - Consulting
-        - Creatives & Design
-        - Management & Executive
-        - Public Sector & Government
-        - Legal & Compliance
-        - Human Resources
-        - Arts & Entertainment
-        - Sales
-        - Customer Service & Support
-        - Education & Training
-        - Healthcare
-        
-        ### Output Files:
-        - `internships_all_720h_[timestamp].json`
-        - `internships_all_720h_[timestamp].csv`
-        - `internships_all_720h_[timestamp].md`
-        
-        ### Estimated Runtime:
-        - ~15-20 minutes total
-        - Each category takes ~2-3 minutes
-        - 5 categories run in parallel
-        
-        ### Source:
-        All data scraped from intern-list.com Airtable bases
-        """,
     )
-
-    scrape_internships
+    
+    # Task 2: Upload to S3
+    s3_task = PythonOperator(
+        task_id='upload_to_s3',
+        python_callable=upload_internship_jobs_to_s3,
+        provide_context=True,
+    )
+    
+    # Task 3: Upload to Snowflake
+    snowflake_task = PythonOperator(
+        task_id='upload_to_snowflake',
+        python_callable=upload_internship_jobs_to_snowflake,
+        provide_context=True,
+    )
+    
+    # Task 4: Run dbt transformations (transforms raw -> processed)
+    dbt_task = BashOperator(
+        task_id='run_dbt_transformations',
+        bash_command='export PATH="/home/airflow/.local/bin:$PATH" && cd /opt/airflow/dbt && dbt run --profiles-dir . --target prod',
+        env={
+            'DBT_PROFILES_DIR': '/opt/airflow/dbt',
+        },
+        trigger_rule='all_done',  # Continue even if previous tasks fail
+    )
+    
+    # Task 5: Print summary
+    summary_task = PythonOperator(
+        task_id='print_summary',
+        python_callable=print_pipeline_summary,
+        provide_context=True,
+    )
+    
+    # Pipeline: Scrape -> S3 -> Snowflake -> dbt -> Summary
+    scrape_task >> s3_task >> snowflake_task >> dbt_task >> summary_task

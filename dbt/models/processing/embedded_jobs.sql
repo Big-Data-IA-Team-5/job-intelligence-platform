@@ -1,11 +1,13 @@
 -- Embedded Jobs
 -- Generates vector embeddings for semantic search
+-- VECTOR types cast to VARIANT for dbt compatibility
 
 {{
     config(
         materialized='incremental',
         unique_key='job_id',
-        schema='processing'
+        schema='processing',
+        on_schema_change='ignore'
     )
 }}
 
@@ -20,20 +22,24 @@ WITH jobs AS (
 embedded AS (
     SELECT
         *,
-        -- Generate embedding for job description
-        SNOWFLAKE.CORTEX.EMBED_TEXT_768(
-            '{{ var("embedding_model") }}',
-            CONCAT(
-                title, '. ',
-                company, '. ',
-                LEFT(description, 2000)
+        -- Generate embedding for job description (cast to VARIANT for dbt compatibility)
+        TO_VARIANT(
+            SNOWFLAKE.CORTEX.EMBED_TEXT_768(
+                'e5-base-v2',
+                CONCAT(
+                    title, '. ',
+                    company, '. ',
+                    LEFT(description, 2000)
+                )
             )
         ) AS description_embedding,
         
-        -- Generate embedding for extracted skills
-        SNOWFLAKE.CORTEX.EMBED_TEXT_768(
-            '{{ var("embedding_model") }}',
-            COALESCE(extracted_skills, title)
+        -- Generate embedding for extracted skills (cast to VARIANT for dbt compatibility)
+        TO_VARIANT(
+            SNOWFLAKE.CORTEX.EMBED_TEXT_768(
+                'e5-base-v2',
+                COALESCE(extracted_skills, title)
+            )
         ) AS skills_embedding
         
     FROM jobs

@@ -48,6 +48,26 @@ class UploadRequest(BaseModel):
     resume_text: str = Field(..., min_length=100, max_length=50000)
     file_name: str = Field(..., max_length=255)
     user_id: Optional[str] = None
+    
+    @validator('file_name')
+    def validate_file_extension(cls, v):
+        """Validate file extension"""
+        if not v or '.' not in v:
+            raise ValueError('Invalid filename: missing file extension')
+        
+        extension = v.lower().split('.')[-1]
+        allowed = ['pdf', 'docx', 'txt']
+        
+        if extension not in allowed:
+            raise ValueError(f'Invalid file type .{extension}. Allowed: {", ".join(allowed)}')
+        
+        return v
+
+class FileUploadRequest(BaseModel):
+    """File upload with binary content validation"""
+    filename: str = Field(..., max_length=255)
+    content: bytes = Field(...)
+    user_id: Optional[str] = None
 
 class UploadResponse(BaseModel):
     """Resume upload response"""

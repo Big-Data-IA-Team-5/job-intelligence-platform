@@ -20,10 +20,19 @@ def clean_nan_values(value):
 
 def load_secrets():
     """Load secrets from secrets.json file"""
-    # Look for secrets.json in project root (one level above /airflow/)
-    current_dir = Path(__file__).resolve()
-    project_root = current_dir.parent.parent.parent.parent
-    secrets_path = project_root / 'secrets.json'
+    # Try Docker mount locations first, then local development path
+    docker_path = Path('/opt/airflow/secrets/secrets.json')
+    docker_path_alt = Path('/opt/airflow/secrets.json')
+    
+    if docker_path.exists():
+        secrets_path = docker_path
+    elif docker_path_alt.exists():
+        secrets_path = docker_path_alt
+    else:
+        # Local development: look in project root
+        current_dir = Path(__file__).resolve()
+        project_root = current_dir.parent.parent.parent.parent
+        secrets_path = project_root / 'secrets.json'
     
     if not secrets_path.exists():
         raise FileNotFoundError(f"secrets.json not found at {secrets_path}")
@@ -88,17 +97,19 @@ def upload_to_snowflake(
         rows_inserted = 0
         
         if table.lower() == 'h1b_raw':
-            # H1B-specific insert
+            # H1B-specific insert - BATCH INSERT for performance
+            insert_query = f"""
+            INSERT INTO {table} (
+                case_number, employer_name, job_title, soc_title,
+                worksite_city, worksite_state, 
+                wage_rate_of_pay_from, wage_rate_of_pay_to, wage_unit_of_pay,
+                h1b_dependent, willful_violator
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            
+            # Prepare all values for batch insert
+            batch_values = []
             for record in data:
-                insert_query = f"""
-                INSERT INTO {table} (
-                    case_number, employer_name, job_title, soc_title,
-                    worksite_city, worksite_state, 
-                    wage_rate_of_pay_from, wage_rate_of_pay_to, wage_unit_of_pay,
-                    h1b_dependent, willful_violator
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """
-                
                 values = (
                     clean_nan_values(record.get('CASE_NUMBER')),
                     clean_nan_values(record.get('EMPLOYER_NAME')),
@@ -112,31 +123,34 @@ def upload_to_snowflake(
                     clean_nan_values(record.get('H1B_DEPENDENT')),
                     clean_nan_values(record.get('WILLFUL_VIOLATOR'))
                 )
-                
-                cursor.execute(insert_query, values)
-                rows_inserted += 1
+                batch_values.append(values)
+            
+            # Execute batch insert - all rows in single transaction
+            cursor.executemany(insert_query, batch_values)
+            rows_inserted = len(batch_values)
+            print(f"✅ Batch inserted {rows_inserted} H1B records in single transaction")
         else:
-            # Jobs table insert - FIXED VERSION
+            # Jobs table insert - BATCH INSERT for performance (industry standard)
+            insert_query = f"""
+            INSERT INTO {table} (
+                job_id, url, title, company, location, description, snippet,
+                salary_min, salary_max, salary_text, job_type, posted_date,
+                work_model, department, company_size, qualifications, 
+                h1b_sponsored, is_new_grad, category,
+                scraped_at, source, raw_json
+            )
+            SELECT 
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, 
+                CURRENT_TIMESTAMP(), 
+                %s, 
+                PARSE_JSON(%s)
+            """
+            
+            # Prepare all values for batch insert
+            batch_values = []
             for record in data:
-                # Convert entire record to JSON string for raw_json column
                 raw_json_str = json.dumps(record)
-                
-                insert_query = f"""
-                INSERT INTO {table} (
-                    job_id, url, title, company, location, description, snippet,
-                    salary_min, salary_max, salary_text, job_type, posted_date,
-                    work_model, department, company_size, qualifications, 
-                    h1b_sponsored, is_new_grad, category,
-                    scraped_at, source, raw_json
-                )
-                SELECT 
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, 
-                    CURRENT_TIMESTAMP(), 
-                    %s, 
-                    PARSE_JSON(%s)
-                """
-                
                 values = (
                     clean_nan_values(record.get('job_id')),
                     clean_nan_values(record.get('url')),
@@ -160,9 +174,12 @@ def upload_to_snowflake(
                     clean_nan_values(record.get('source', 'unknown')),
                     raw_json_str
                 )
-                
-                cursor.execute(insert_query, values)
-                rows_inserted += 1
+                batch_values.append(values)
+            
+            # Execute batch insert - all rows in single transaction
+            cursor.executemany(insert_query, batch_values)
+            rows_inserted = len(batch_values)
+            print(f"✅ Batch inserted {rows_inserted} jobs in single transaction")
         
         conn.commit()
         print(f"Successfully inserted {rows_inserted} rows into {database}.{schema}.{table}")

@@ -1,19 +1,23 @@
 """
 Airflow DAG for Airtable New Grad Job Scraper
 Scrapes all new grad job categories from Airtable individually with deep scrolling
+Pipeline: Scrape -> S3 Upload -> Snowflake Upload
 """
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 from datetime import datetime, timedelta
 import sys
 import os
+import json
 
-# Add parent directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+# Add parent directory to path for Docker
+sys.path.insert(0, '/opt/airflow')
 
-from scrapers.Airtable_Comprehensive_scraper import ComprehensiveAirtableScraper
+# Import only lightweight modules at top level
+# Heavy imports moved inside task functions to prevent DAG import timeout
 
 # Default arguments
 default_args = {
@@ -23,26 +27,32 @@ default_args = {
     'email_on_retry': False,
     'retries': 2,
     'retry_delay': timedelta(minutes=10),
-    'execution_timeout': timedelta(hours=2),  # Prevent zombie processes
+    'execution_timeout': timedelta(hours=2),
 }
 
-def run_comprehensive_airtable_scraper(**context):
+def scrape_grad_jobs(**context):
     """
-    Run the comprehensive Airtable scraper for new grad jobs
-    Scrapes all categories individually with deep scrolling
+    Scrape all graduate job categories from Airtable
     """
+    # Lazy imports to prevent DAG import timeout
+    from scrapers.Airtable_Comprehensive_scraper import ComprehensiveAirtableScraper
+    from dags.common.s3_utils import cleanup_old_s3_files
+    
     print("=" * 80)
-    print("STARTING AIRTABLE NEW GRAD JOB SCRAPER")
+    print("STEP 1: SCRAPING GRADUATE JOBS FROM AIRTABLE")
     print("=" * 80)
     
-    # Configuration
-    hours_lookback = 720  # 30 days
-    num_workers = 5       # 5 parallel workers
+    # Clean up old S3 files first (files older than 30 days)
+    print("\nCleaning up old S3 files...")
+    cleanup_old_s3_files(prefix='raw/airtable/grad/', days_to_keep=30)
+    
+    # Configuration - PRODUCTION OPTIMIZED
+    hours_lookback = 96   # 4 days (recent jobs only)
+    num_workers = 5       # 5 parallel workers for faster scraping (Selenium supports 20 max sessions)
     
     print(f"\n⚙️  Configuration:")
-    print(f"   Time window: Last {hours_lookback} hours ({hours_lookback/24:.1f} days)")
+    print(f"   Time window: Last {hours_lookback} hours ({hours_lookback/24:.0f} days)")
     print(f"   Workers: {num_workers}")
-    print(f"   Output: data/scraped/")
     
     # Initialize scraper
     scraper = ComprehensiveAirtableScraper(
@@ -55,8 +65,11 @@ def run_comprehensive_airtable_scraper(**context):
     print(f"\n🚀 Starting scraper...")
     results = scraper.scrape_all_categories()
     
+    # Collect all jobs
+    all_jobs = scraper.all_jobs
+    
     # Summary
-    total_jobs = sum(r.get('job_count', 0) for r in results.values())
+    total_jobs = len(all_jobs)
     successful = sum(1 for r in results.values() if r.get('status') == 'success')
     failed = sum(1 for r in results.values() if r.get('status') == 'failed')
     
@@ -67,82 +80,133 @@ def run_comprehensive_airtable_scraper(**context):
     print(f"   Total jobs: {total_jobs}")
     print(f"   Successful categories: {successful}/{len(results)}")
     print(f"   Failed categories: {failed}/{len(results)}")
-    print(f"   Time window: Last {hours_lookback} hours")
     
-    # Push metrics to XCom
-    context['ti'].xcom_push(key='total_jobs', value=total_jobs)
-    context['ti'].xcom_push(key='successful_categories', value=successful)
-    context['ti'].xcom_push(key='failed_categories', value=failed)
-    context['ti'].xcom_push(key='hours_lookback', value=hours_lookback)
+    # Push to XCom for next tasks
+    context['ti'].xcom_push(key='grad_jobs', value=all_jobs)
+    context['ti'].xcom_push(key='job_count', value=total_jobs)
     
-    # Return summary
-    return {
-        'total_jobs': total_jobs,
-        'successful_categories': successful,
-        'failed_categories': failed,
-        'time_window_hours': hours_lookback
-    }
+    return total_jobs
+
+def upload_grad_jobs_to_s3(**context):
+    """
+    Upload scraped graduate jobs to S3
+    """
+    from dags.common.s3_utils import upload_to_s3
+    
+    print("\n" + "=" * 80)
+    print("STEP 2: UPLOADING TO S3")
+    print("=" * 80)
+    
+    # Get jobs from previous task
+    grad_jobs = context['ti'].xcom_pull(key='grad_jobs', task_ids='scrape_grad_jobs')
+    
+    if not grad_jobs:
+        print("⚠️  No jobs to upload")
+        return None
+    
+    # Upload to S3
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    s3_key = f"raw/airtable/grad/grad_jobs_{timestamp}.json"
+    s3_path = upload_to_s3(grad_jobs, s3_key)
+    
+    print(f"✅ Uploaded {len(grad_jobs)} jobs to: {s3_path}")
+    
+    context['ti'].xcom_push(key='s3_path', value=s3_path)
+    return s3_path
+
+def upload_grad_jobs_to_snowflake(**context):
+    """
+    Upload scraped graduate jobs to Snowflake
+    """
+    from dags.common.snowflake_utils import upload_to_snowflake
+    
+    print("\n" + "=" * 80)
+    print("STEP 3: UPLOADING TO SNOWFLAKE")
+    print("=" * 80)
+    
+    # Get jobs from scraping task
+    grad_jobs = context['ti'].xcom_pull(key='grad_jobs', task_ids='scrape_grad_jobs')
+    
+    if not grad_jobs:
+        print("⚠️  No jobs to upload")
+        return 0
+    
+    # Upload to Snowflake
+    rows = upload_to_snowflake(
+        data=grad_jobs,
+        table='jobs_raw',
+        database='job_intelligence',
+        schema='raw'
+    )
+    
+    print(f"✅ Inserted {rows} rows to Snowflake")
+    return rows
+
+def print_pipeline_summary(**context):
+    """Print comprehensive pipeline summary"""
+    print("\n" + "=" * 80)
+    print("🎯 GRADUATE JOBS PIPELINE SUMMARY")
+    print("=" * 80)
+    
+    job_count = context['ti'].xcom_pull(key='job_count', task_ids='scrape_grad_jobs') or 0
+    s3_path = context['ti'].xcom_pull(key='s3_path', task_ids='upload_to_s3') or 'N/A'
+    
+    print(f"\n📊 Results:")
+    print(f"   ✓ Jobs scraped: {job_count}")
+    print(f"   ✓ S3 path: {s3_path}")
+    print(f"   ✓ Snowflake table: job_intelligence.raw.jobs_raw")
+    print(f"\n✅ PIPELINE COMPLETED SUCCESSFULLY!")
+    print("=" * 80)
 
 # Create DAG
 with DAG(
     'airtable_grad_scraper',
     default_args=default_args,
-    description='Airtable new grad job scraper - scrapes all grad job categories individually',
-    schedule_interval='0 2 * * *',  # Run daily at 2 AM
-    start_date=days_ago(1),
+    description='Graduate jobs scraper pipeline: Scrape -> S3 -> Snowflake',
+    schedule_interval='5 2 * * *',  # Run daily at 2:05 AM UTC
+    start_date=datetime(2025, 12, 5, 2, 0),  # Start today at 2 AM
     catchup=False,
-    tags=['scraper', 'airtable', 'new-grad', 'jobs'],
+    tags=['scraper', 'airtable', 'new-grad', 'jobs', 'pipeline'],
 ) as dag:
     
-    # Task: Run comprehensive Airtable scraper
-    scrape_airtable = PythonOperator(
-        task_id='scrape_airtable_grad_jobs',
-        python_callable=run_comprehensive_airtable_scraper,
+    # Task 1: Scrape graduate jobs
+    scrape_task = PythonOperator(
+        task_id='scrape_grad_jobs',
+        python_callable=scrape_grad_jobs,
         provide_context=True,
-        execution_timeout=timedelta(hours=2),  # Max 2 hours
-        doc_md="""
-        ## Airtable New Grad Job Scraper
-        
-        This task runs the comprehensive Airtable scraper that:
-        - Scrapes **21 job categories** individually
-        - Uses **Selenium** with deep scrolling (up to 100 scrolls per category)
-        - Runs **5 parallel workers** for efficiency
-        - Collects jobs from the **last 30 days**
-        - Saves output to `data/scraped/` as JSON, CSV, and Markdown
-        
-        ### Categories Scraped:
-        - Software Engineering
-        - Data Engineer
-        - Machine Learning & AI
-        - Cyber Security
-        - Engineering & Development
-        - Data Analyst
-        - Business Analyst
-        - Product Management
-        - Project Manager
-        - Marketing
-        - Sales
-        - Consulting
-        - Management & Executive
-        - Accounting & Finance
-        - Human Resources
-        - Customer Service & Support
-        - Legal & Compliance
-        - Creatives & Design
-        - Arts & Entertainment
-        - Education & Training
-        - Health Care
-        
-        ### Output Files:
-        - `airtable_all_720h_[timestamp].json`
-        - `airtable_all_720h_[timestamp].csv`
-        - `airtable_all_720h_[timestamp].md`
-        
-        ### Estimated Runtime:
-        - ~12-15 minutes total
-        - Each category takes ~2-3 minutes
-        - 5 categories run in parallel
-        """,
     )
-
-    scrape_airtable
+    
+    # Task 2: Upload to S3
+    s3_task = PythonOperator(
+        task_id='upload_to_s3',
+        python_callable=upload_grad_jobs_to_s3,
+        provide_context=True,
+    )
+    
+    # Task 3: Upload to Snowflake
+    snowflake_task = PythonOperator(
+        task_id='upload_to_snowflake',
+        python_callable=upload_grad_jobs_to_snowflake,
+        provide_context=True,
+    )
+    
+    # Task 4: Run dbt transformations (transforms raw -> processed)
+    dbt_task = BashOperator(
+        task_id='run_dbt_transformations',
+        bash_command='export PATH="/home/airflow/.local/bin:$PATH" && cd /opt/airflow/dbt && dbt run --profiles-dir . --target prod',
+        env={
+            'DBT_PROFILES_DIR': '/opt/airflow/dbt',
+            'SNOWFLAKE_ACCOUNT': '{{ var.value.get("SNOWFLAKE_ACCOUNT", "" ) }}',
+        },
+        trigger_rule='all_done',  # Continue even if previous tasks fail
+    )
+    
+    # Task 5: Print summary
+    summary_task = PythonOperator(
+        task_id='print_summary',
+        python_callable=print_pipeline_summary,
+        provide_context=True,
+    )
+    
+    # Pipeline: Scrape -> S3 -> Snowflake -> dbt -> Summary
+    scrape_task >> s3_task >> snowflake_task >> dbt_task >> summary_task

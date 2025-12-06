@@ -6,7 +6,7 @@ from typing import Optional, List
 from datetime import datetime, date
 
 class JobResponse(BaseModel):
-    """Single job response"""
+    """Single job response with H-1B data"""
     job_id: str
     url: str
     title: str
@@ -26,6 +26,17 @@ class JobResponse(BaseModel):
     company_size: Optional[str] = None
     h1b_sponsored_explicit: Optional[bool] = None
     is_new_grad_role: Optional[bool] = None
+    job_category: Optional[str] = None
+    
+    # H-1B data from h1b_raw table
+    total_petitions: Optional[int] = None
+    avg_approval_rate: Optional[float] = None
+    h1b_employer_name: Optional[str] = None
+    
+    # Additional metadata
+    snippet: Optional[str] = None
+    posted_date: Optional[date] = None
+    relevance_score: Optional[int] = None
     
     class Config:
         from_attributes = True

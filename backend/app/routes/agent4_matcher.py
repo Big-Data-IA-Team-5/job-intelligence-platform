@@ -200,18 +200,47 @@ class ResumeMatcherAgent:
             'salary_min': None
         }
     
-    def find_matching_jobs(self, profile: Dict, limit: int = 20) -> List[Dict]:
+    def find_matching_jobs(self, profile: Dict, limit: int = 50, days_back: int = 90) -> List[Dict]:
         """
-        Step 2: Find similar jobs using semantic search.
+        Step 2: Find matching jobs using semantic search on actual resume content.
         
-        For now, use simple SQL matching (vector search is complex).
-        Filter by visa compatibility and skills.
+        Uses:
+        - Skills matching (technical + desired roles)
+        - Visa compatibility filtering
+        - Recent jobs prioritization (latest first)
+        - Semantic search on job descriptions
+        
+        Args:
+            profile: Extracted resume profile with skills/experience
+            limit: Max number of candidates to return (default 50 for better ranking pool)
+            days_back: Only consider jobs posted in last N days (default 90)
         """
         cursor = self.conn.cursor()
         
         try:
-            # Build search based on profile
+            # Extract search criteria from profile
             work_auth = profile.get('work_authorization', '')
+            tech_skills = profile.get('technical_skills', [])
+            desired_roles = profile.get('desired_roles', [])
+            
+            # Build skill-based search query
+            search_terms = []
+            
+            # Add top technical skills (max 10 for performance)
+            if tech_skills:
+                search_terms.extend(tech_skills[:10])
+            
+            # Add desired roles
+            if desired_roles:
+                search_terms.extend(desired_roles[:5])
+            
+            # Fallback if no skills extracted
+            if not search_terms:
+                search_terms = ['software', 'engineer', 'developer']
+                logger.warning("⚠️ No skills found in resume, using generic search")
+            
+            # Build search string for semantic matching
+            search_string = ' '.join(search_terms).lower()
             
             # Determine compatible visa categories
             compatible_visas = []
@@ -228,8 +257,24 @@ class ResumeMatcherAgent:
             if not compatible_visas:
                 compatible_visas = ['CPT', 'OPT', 'H-1B']
             
-            # Build SQL
+            # Build SQL with semantic search
             visa_filter = "', '".join(compatible_visas)
+            
+            # Escape search string for SQL
+            search_string_escaped = search_string.replace("'", "''")
+            
+            # Build CASE statements for each search term to boost matching
+            skill_match_cases = []
+            for term in search_terms[:10]:  # Limit to top 10 for performance
+                term_escaped = term.lower().replace("'", "''")
+                skill_match_cases.append(
+                    f"(CASE WHEN LOWER(qualifications) LIKE '%{term_escaped}%' "
+                    f"OR LOWER(description) LIKE '%{term_escaped}%' "
+                    f"OR LOWER(title) LIKE '%{term_escaped}%' THEN 1 ELSE 0 END)"
+                )
+            
+            # Calculate relevance score
+            relevance_score = " + ".join(skill_match_cases) if skill_match_cases else "0"
             
             sql = f"""
                 SELECT 
@@ -244,24 +289,60 @@ class ResumeMatcherAgent:
                     salary_max,
                     job_type,
                     visa_category,
-                    h1b_sponsor
+                    h1b_sponsor,
+                    days_since_posted,
+                    ({relevance_score}) as relevance_score
                 FROM jobs_processed
                 WHERE visa_category IN ('{visa_filter}')
-                ORDER BY days_since_posted ASC
+                  AND days_since_posted <= {days_back}
+                  AND ({relevance_score}) > 0
+                ORDER BY 
+                    relevance_score DESC,
+                    days_since_posted ASC
                 LIMIT {limit}
             """
             
+            logger.info(f"🔍 Searching with skills: {', '.join(search_terms[:5])}...")
+            logger.info(f"📅 Date range: Last {days_back} days")
+            
             cursor.execute(sql)
-            columns = [col[0].lower() for col in cursor.description]  # Force lowercase
+            columns = [col[0].lower() for col in cursor.description]
             jobs = [dict(zip(columns, row)) for row in cursor.fetchall()]
             
-            logger.info(f"🔍 Found {len(jobs)} candidate jobs")
+            logger.info(f"✅ Found {len(jobs)} matching jobs")
             if jobs:
-                logger.info(f"📊 Sample job keys: {list(jobs[0].keys())}")
-                logger.info(f"📊 Sample job data: job_id={jobs[0].get('job_id')}, title={jobs[0].get('title')}")
+                logger.info(f"📊 Top match: {jobs[0].get('title')} (relevance: {jobs[0].get('relevance_score')}, days old: {jobs[0].get('days_since_posted')})")
             
             return jobs
             
+        except Exception as e:
+            logger.error(f"❌ Job search failed: {e}")
+            # Fallback to basic query if semantic search fails
+            return self._fallback_search(compatible_visas, limit, days_back)
+            
+        finally:
+            cursor.close()
+    
+    def _fallback_search(self, compatible_visas: List[str], limit: int, days_back: int) -> List[Dict]:
+        """Fallback search without semantic matching."""
+        cursor = self.conn.cursor()
+        try:
+            visa_filter = "', '".join(compatible_visas)
+            sql = f"""
+                SELECT 
+                    job_id, url, title, company_clean as company,
+                    location, description, qualifications,
+                    salary_min, salary_max, job_type,
+                    visa_category, h1b_sponsor, days_since_posted
+                FROM jobs_processed
+                WHERE visa_category IN ('{visa_filter}')
+                  AND days_since_posted <= {days_back}
+                ORDER BY days_since_posted ASC
+                LIMIT {limit}
+            """
+            cursor.execute(sql)
+            columns = [col[0].lower() for col in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
         finally:
             cursor.close()
     
@@ -441,9 +522,9 @@ class ResumeMatcherAgent:
             logger.info("📄 Step 1: Extracting resume profile...")
             profile = self.extract_profile(resume_text)
             
-            # Step 2: Find candidate jobs
-            logger.info("🔍 Step 2: Finding candidate jobs...")
-            candidate_jobs = self.find_matching_jobs(profile, limit=20)
+            # Step 2: Find candidate jobs using semantic search
+            logger.info("🔍 Step 2: Finding candidate jobs with semantic matching...")
+            candidate_jobs = self.find_matching_jobs(profile, limit=50, days_back=90)
             
             if not candidate_jobs:
                 logger.warning("⚠️ No candidate jobs found")

@@ -1374,9 +1374,25 @@ class HTTPClient:
             options.add_argument(f'user-agent={random.choice(self.user_agents)}')
             options.add_argument('--window-size=1920,1080')
             
-            self.driver = webdriver.Chrome(options=options)
-            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            return True
+            # Use Selenium Grid with retry logic
+            selenium_url = os.getenv('SELENIUM_REMOTE_URL', 'http://selenium-chrome:4444/wd/hub')
+            
+            # Retry connection to Selenium Grid with exponential backoff
+            max_connection_retries = 3
+            for retry in range(max_connection_retries):
+                try:
+                    self.driver = webdriver.Remote(command_executor=selenium_url, options=options)
+                    self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                    return True
+                except Exception as e:
+                    if retry < max_connection_retries - 1:
+                        wait_time = (retry + 1) * 5  # 5, 10, 15 seconds
+                        print(f"   ⚠️ Failed to connect to Selenium Grid (attempt {retry + 1}/{max_connection_retries}): {str(e)[:80]}")
+                        print(f"   ⏳ Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                    else:
+                        print(f"   ❌ Failed to connect to Selenium Grid after {max_connection_retries} attempts: {str(e)[:80]}")
+                        return False
         except Exception as e:
             print(f"   ⚠️ Selenium init failed: {str(e)[:80]}")
             return False

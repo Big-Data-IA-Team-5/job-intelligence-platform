@@ -10,6 +10,7 @@ from selenium.common.exceptions import (
     TimeoutException,
     NoSuchElementException
 )
+from webdriver_manager.chrome import ChromeDriverManager
 import time
 import json
 import csv
@@ -262,17 +263,48 @@ class ComprehensiveAirtableScraper:
                     chrome_options.add_experimental_option('useAutomationExtension', False)
                     chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
                     chrome_options.page_load_strategy = 'normal'
-                    driver = webdriver.Chrome(options=chrome_options)
-                    with self.lock:
-                        logger.info("✓ Chrome driver initialized")
+                    # Use Selenium Grid with retry logic
+                    selenium_url = os.getenv('SELENIUM_REMOTE_URL', 'http://selenium-chrome:4444/wd/hub')
+                    
+                    # Retry connection to Selenium Grid with exponential backoff
+                    max_connection_retries = 3
+                    for retry in range(max_connection_retries):
+                        try:
+                            driver = webdriver.Remote(command_executor=selenium_url, options=chrome_options)
+                            with self.lock:
+                                logger.info("✓ Chrome driver initialized")
+                            break
+                        except Exception as e:
+                            if retry < max_connection_retries - 1:
+                                wait_time = (retry + 1) * 5  # 5, 10, 15 seconds
+                                with self.lock:
+                                    logger.warning(f"⚠️  Failed to connect to Selenium Grid (attempt {retry + 1}/{max_connection_retries}): {str(e)}")
+                                    logger.info(f"⏳ Retrying in {wait_time} seconds...")
+                                time.sleep(wait_time)
+                            else:
+                                with self.lock:
+                                    logger.error(f"❌ Failed to connect to Selenium Grid after {max_connection_retries} attempts")
+                                raise
                 
                 with self.lock:
                     logger.info(f"\n🌐 Loading {url}...")
                 driver.get(url)
                 
                 with self.lock:
-                    logger.info("⏳ Waiting for table to load (30 seconds)...")
-                time.sleep(30)
+                    logger.info("⏳ Waiting for table to load...")
+                
+                # Wait for Airtable to fully render the data rows (reduced timeout)
+                try:
+                    WebDriverWait(driver, 30).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, 'div.dataRow[data-rowid]'))
+                    )
+                    with self.lock:
+                        logger.info("✓ Table rows detected")
+                    time.sleep(5)  # Brief wait for stabilization
+                except TimeoutException:
+                    with self.lock:
+                        logger.warning("⚠️  Timeout waiting for dataRow elements - using fallback wait...")
+                    time.sleep(15)  # Shorter fallback
                 
                 with self.lock:
                     logger.info("\n🔄 Scrolling horizontally to load all columns...")
@@ -401,25 +433,44 @@ class ComprehensiveAirtableScraper:
         seen_titles = set()
         no_new_data_count = 0
         scroll_attempts = 0
-        max_scroll_attempts = 100  # Increased for comprehensive scraping
+        old_jobs_count = 0  # Track consecutive old jobs to exit early
+        # Optimized for time-window scraping: 96 hours = 4 days, typically 20-50 jobs per category
+        # Each scroll loads ~10-15 jobs, so 30 scrolls = 300-450 jobs coverage
+        max_scroll_attempts = 30 if self.hours_lookback < 720 else 100  # 30 for <30 days, 100 for full scrape
         
         with self.lock:
-            logger.info(f"\n🔍 Starting comprehensive extraction for {category}...")
+            logger.info(f"\n🔍 Starting extraction for {category} (max {max_scroll_attempts} scrolls)...")
         
         while no_new_data_count < 5 and scroll_attempts < max_scroll_attempts:
-            if scroll_attempts % 10 == 0:
+            if scroll_attempts % 5 == 0:  # Report every 5 scrolls instead of 10
                 with self.lock:
-                    logger.info(f"\n  → Scroll {scroll_attempts + 1} | Total jobs: {len(all_jobs)}")
+                    logger.info(f"  → Scroll {scroll_attempts + 1} | Total jobs: {len(all_jobs)}")
             
-            time.sleep(2)
+            time.sleep(0.8)  # Reduced from 2s - Airtable loads quickly
             
-            new_jobs = self.extract_visible_jobs(driver, seen_titles, category)
+            new_jobs, found_old_job = self.extract_visible_jobs(driver, seen_titles, category)
             all_jobs.extend(new_jobs)
+            
+            # Track if we're seeing jobs older than cutoff date
+            if found_old_job:
+                old_jobs_count += 1
+                # Stop if we've seen 3+ scrolls with old jobs (means we've passed the time window)
+                if old_jobs_count >= 3 and self.hours_lookback < 720:
+                    with self.lock:
+                        logger.info(f"  🛑 Reached jobs older than {self.hours_lookback}h cutoff - stopping")
+                    break
+            else:
+                old_jobs_count = 0  # Reset counter if we find recent jobs
             
             if new_jobs:
                 no_new_data_count = 0
             else:
                 no_new_data_count += 1
+                # Early exit if no new jobs found for 3 consecutive scrolls (saves time)
+                if no_new_data_count >= 3 and self.hours_lookback < 720:
+                    with self.lock:
+                        logger.info(f"  ⏭️  No new jobs in last 3 scrolls - stopping early")
+                    break
             
             self.perform_scroll(driver)
             scroll_attempts += 1
@@ -431,32 +482,42 @@ class ComprehensiveAirtableScraper:
         return all_jobs
     
     def perform_scroll(self, driver):
-        """Perform scrolling to load more content"""
+        """Perform scrolling to load more content - optimized for speed"""
         try:
             driver.execute_script("window.scrollBy(0, 600);")
-            time.sleep(0.5)
+            time.sleep(0.2)  # Reduced from 0.5s
             
             scrollable_divs = driver.find_elements(By.CSS_SELECTOR, 'div[style*="overflow"]')
             for div in scrollable_divs[:3]:
                 try:
                     driver.execute_script("arguments[0].scrollTop += 600;", div)
-                    time.sleep(0.3)
+                    time.sleep(0.1)  # Reduced from 0.3s
                 except:
                     pass
             
             body = driver.find_element(By.TAG_NAME, "body")
             body.send_keys(Keys.PAGE_DOWN)
-            time.sleep(0.5)
+            time.sleep(0.2)  # Reduced from 0.5s
             
         except:
             pass
     
     def extract_visible_jobs(self, driver, seen_titles, category):
-        """Extract currently visible jobs from the page"""
+        """Extract currently visible jobs from the page
+        
+        Returns:
+            tuple: (new_jobs list, found_old_job boolean)
+        """
         new_jobs = []
+        found_old_job = False  # Track if we found jobs older than cutoff
         
         try:
             all_row_elements = driver.find_elements(By.CSS_SELECTOR, 'div.dataRow[data-rowid]')
+            
+            # Debug: log how many row elements found
+            if len(all_row_elements) > 0:
+                with self.lock:
+                    logger.info(f"   DEBUG: Found {len(all_row_elements)} row elements")
             
             rows_by_id = {}
             for elem in all_row_elements:
@@ -541,8 +602,19 @@ class ComprehensiveAirtableScraper:
                     if title and len(title) > 3 and title not in seen_titles:
                         date_posted = job.get('date_posted', '')
                         
-                        # Apply time filter
-                        if self.is_within_timeframe(date_posted):
+                        # Debug: log first few jobs found
+                        if len(new_jobs) < 3:
+                            with self.lock:
+                                logger.info(f"   DEBUG: Job found - Title: {title[:50]}, Date: '{date_posted}'")
+                        
+                        # Check if job is within time window
+                        if date_posted and not self.is_within_timeframe(date_posted):
+                            # Found a job older than our cutoff - signal to stop scrolling
+                            found_old_job = True
+                            continue  # Skip this job, it's too old
+                        
+                        # Accept jobs with NO date OR within timeframe
+                        if not date_posted or self.is_within_timeframe(date_posted):
                             seen_titles.add(title)
                             
                             # Convert to unified schema
@@ -582,7 +654,7 @@ class ComprehensiveAirtableScraper:
         except Exception as e:
             pass
         
-        return new_jobs
+        return new_jobs, found_old_job
     
     def scrape_all_categories(self, specific_categories=None):
         """Scrape all categories in parallel
@@ -648,7 +720,7 @@ class ComprehensiveAirtableScraper:
     
     def save_outputs(self, all_results):
         """Save consolidated outputs"""
-        folder = "data/scraped"
+        folder = "/opt/airflow/scraped_jobs"
         os.makedirs(folder, exist_ok=True)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

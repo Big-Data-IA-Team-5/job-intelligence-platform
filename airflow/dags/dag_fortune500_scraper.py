@@ -1,24 +1,24 @@
 """
-DAG 5: Fortune 500 Company Scraper
+DAG: Fortune 500 Company Scraper
 Scrapes jobs from Fortune 500 company career pages using hybrid approach
+Pipeline: Scrape -> S3 Upload -> Snowflake Upload
 Schedule: Weekly on Mondays at 1 AM UTC
 """
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 from datetime import datetime, timedelta
 import sys
 import os
-
-# Add scrapers directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../scrapers'))
-
-from Fortune_500 import UltraSmartScraper, scrape_single_company, ProgressManager
-from common.snowflake_utils import upload_to_snowflake, load_secrets
-from common.s3_utils import upload_to_s3
-import pandas as pd
-from concurrent.futures import ThreadPoolExecutor
 import json
+
+# Add parent directories to path
+sys.path.insert(0, '/opt/airflow')
+sys.path.insert(0, '/opt/airflow/scrapers')
+
+# Import only lightweight modules at top level
+# Heavy imports moved inside task functions to prevent DAG import timeout
 
 default_args = {
     'owner': 'airflow',
@@ -27,15 +27,24 @@ default_args = {
     'email_on_retry': False,
     'retries': 2,
     'retry_delay': timedelta(minutes=15),
-    'execution_timeout': timedelta(hours=6),  # Prevent zombie processes
+    'execution_timeout': timedelta(hours=6),
 }
 
 def scrape_fortune500_jobs(**context):
     """Scrape jobs from Fortune 500 companies"""
-    from common.s3_utils import cleanup_old_s3_files
+    # Lazy imports to prevent DAG import timeout
+    from scrapers.Fortune_500 import UltraSmartScraper, scrape_single_company, ProgressManager
+    from dags.common.snowflake_utils import load_secrets
+    from dags.common.s3_utils import cleanup_old_s3_files
+    import pandas as pd
+    from concurrent.futures import ThreadPoolExecutor
+    
+    print("=" * 80)
+    print("STEP 1: SCRAPING FORTUNE 500 COMPANIES")
+    print("=" * 80)
     
     # Clean up old files first (files older than 30 days)
-    print("Cleaning up old S3 files...")
+    print("\nCleaning up old S3 files...")
     cleanup_old_s3_files(prefix='raw/fortune500/', days_to_keep=30)
     
     # Get OpenAI API key from secrets
@@ -54,13 +63,16 @@ def scrape_fortune500_jobs(**context):
     progress = ProgressManager()
     
     # Load companies from CSV
-    csv_path = os.path.join(
-        os.path.dirname(__file__),
-        '../../data/fortune500_career_pages_validated.csv'
-    )
+    # Check Docker mount first, then local path
+    csv_path = '/opt/airflow/data/fortune500_career_pages_validated.csv'
+    if not os.path.exists(csv_path):
+        csv_path = os.path.join(
+            os.path.dirname(__file__),
+            '../../data/fortune500_career_pages_validated.csv'
+        )
     
     if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Fortune 500 CSV not found: {csv_path}")
+        raise FileNotFoundError(f"Fortune 500 CSV not found at: {csv_path}")
     
     companies = []
     with open(csv_path, 'r', encoding='utf-8') as f:
@@ -71,17 +83,20 @@ def scrape_fortune500_jobs(**context):
                 'url': row['final_career_url']
             })
     
-    # Filter out completed companies
+    # Filter out completed companies - PRODUCTION OPTIMIZED
     companies_to_scrape = [
         c for c in companies 
         if not progress.is_completed(c['name'])
-    ][:25]  # Limit to 25 companies per daily run (balance between coverage and runtime)
+    ][:100]  # Scrape 100 companies per run for faster coverage
     
-    print(f"Scraping {len(companies_to_scrape)} Fortune 500 companies")
+    print(f"\n⚙️  Configuration:")
+    print(f"   Companies to scrape: {len(companies_to_scrape)}")
+    print(f"   Max workers: 4")
+    print(f"   Time window: Last 15 days")
     
     all_jobs = []
     
-    # Scrape companies in parallel
+    # Scrape companies in parallel - PRODUCTION OPTIMIZED
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = []
         for idx, company_info in enumerate(companies_to_scrape):
@@ -101,54 +116,139 @@ def scrape_fortune500_jobs(**context):
                 all_jobs.extend(result['jobs'])
                 progress.save_progress(result['company'])
     
-    print(f"Total jobs scraped from Fortune 500: {len(all_jobs)}")
+    print("\n" + "=" * 80)
+    print("SCRAPING COMPLETED")
+    print("=" * 80)
+    print(f"\n📊 Results:")
+    print(f"   Total jobs scraped: {len(all_jobs)}")
+    print(f"   Companies processed: {len(companies_to_scrape)}")
     
-    # Push to XCom
-    context['task_instance'].xcom_push(key='jobs_data', value=all_jobs)
-    context['task_instance'].xcom_push(key='job_count', value=len(all_jobs))
+    # Push to XCom for next tasks
+    context['ti'].xcom_push(key='fortune500_jobs', value=all_jobs)
+    context['ti'].xcom_push(key='job_count', value=len(all_jobs))
     
     return len(all_jobs)
 
-def upload_jobs_to_s3(**context):
-    """Upload scraped jobs to S3 as timestamped file (appends, not replaces)"""
-    jobs = context['task_instance'].xcom_pull(key='jobs_data', task_ids='scrape_fortune500')
+def upload_fortune500_jobs_to_s3(**context):
+    """
+    Upload scraped Fortune 500 jobs to S3
+    """
+    from dags.common.s3_utils import upload_to_s3
+    import pandas as pd
     
-    if not jobs:
-        print("No jobs to upload")
-        return
+    print("\n" + "=" * 80)
+    print("STEP 2: UPLOADING TO S3")
+    print("=" * 80)
     
-    # Use timestamp in filename to append, not replace
+    # Get jobs from previous task
+    fortune500_jobs = context['ti'].xcom_pull(key='fortune500_jobs', task_ids='scrape_fortune500_jobs')
+    
+    if not fortune500_jobs:
+        print("⚠️  No jobs to upload")
+        return None
+    
+    # Upload to S3
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    s3_key = f"raw/fortune500/jobs_{timestamp}.json"
+    s3_key = f"raw/fortune500/fortune500_jobs_{timestamp}.json"
+    s3_path = upload_to_s3(fortune500_jobs, s3_key)
     
-    s3_path = upload_to_s3(jobs, s3_key)
-    print(f"Uploaded to S3: {s3_path}")
+    print(f"✅ Uploaded {len(fortune500_jobs)} jobs to: {s3_path}")
     
-    context['task_instance'].xcom_push(key='s3_path', value=s3_path)
+    context['ti'].xcom_push(key='s3_path', value=s3_path)
     return s3_path
 
+def upload_fortune500_jobs_to_snowflake(**context):
+    """
+    Upload scraped Fortune 500 jobs to Snowflake
+    """
+    from dags.common.snowflake_utils import upload_to_snowflake
+    
+    print("\n" + "=" * 80)
+    print("STEP 3: UPLOADING TO SNOWFLAKE")
+    print("=" * 80)
+    
+    # Get jobs from scraping task
+    fortune500_jobs = context['ti'].xcom_pull(key='fortune500_jobs', task_ids='scrape_fortune500_jobs')
+    
+    if not fortune500_jobs:
+        print("⚠️  No jobs to upload")
+        return 0
+    
+    # Upload to Snowflake
+    rows = upload_to_snowflake(
+        data=fortune500_jobs,
+        table='jobs_raw',
+        database='job_intelligence',
+        schema='raw'
+    )
+    
+    print(f"✅ Inserted {rows} rows to Snowflake")
+    return rows
+
+def print_pipeline_summary(**context):
+    """Print comprehensive pipeline summary"""
+    print("\n" + "=" * 80)
+    print("🎯 FORTUNE 500 PIPELINE SUMMARY")
+    print("=" * 80)
+    
+    job_count = context['ti'].xcom_pull(key='job_count', task_ids='scrape_fortune500_jobs') or 0
+    s3_path = context['ti'].xcom_pull(key='s3_path', task_ids='upload_to_s3') or 'N/A'
+    
+    print(f"\n📊 Results:")
+    print(f"   ✓ Jobs scraped: {job_count}")
+    print(f"   ✓ S3 path: {s3_path}")
+    print(f"   ✓ Snowflake table: job_intelligence.raw.jobs_raw")
+    print(f"\n✅ PIPELINE COMPLETED SUCCESSFULLY!")
+    print("=" * 80)
+
+# Create DAG
 with DAG(
-    'fortune500_scraper_dag',
+    'fortune500_scraper',
     default_args=default_args,
-    description='Scrape jobs from Fortune 500 company career pages weekly (7-8 hour runtime)',
-    schedule_interval='0 18 * * 6',  # Weekly on Saturday at 6 PM UTC (runs overnight, finishes Sunday)
-    start_date=days_ago(1),
+    description='Fortune 500 scraper pipeline: Scrape -> S3 -> Snowflake',
+    schedule_interval='0 6 * * *',  # Run daily at 6:00 AM UTC
+    start_date=datetime(2025, 12, 5, 2, 0),  # Start today at 2 AM
     catchup=False,
-    tags=['scraping', 'fortune500', 'companies', 'weekly'],
+    tags=['scraper', 'fortune500', 'companies', 'weekly', 'pipeline'],
 ) as dag:
     
+    # Task 1: Scrape Fortune 500 jobs
     scrape_task = PythonOperator(
-        task_id='scrape_fortune500',
+        task_id='scrape_fortune500_jobs',
         python_callable=scrape_fortune500_jobs,
         provide_context=True,
-        execution_timeout=timedelta(hours=4),  # Fortune 500 scraping takes longer
     )
     
-    upload_s3_task = PythonOperator(
+    # Task 2: Upload to S3
+    s3_task = PythonOperator(
         task_id='upload_to_s3',
-        python_callable=upload_jobs_to_s3,
+        python_callable=upload_fortune500_jobs_to_s3,
         provide_context=True,
     )
     
-    # Pipeline ends at S3 - Snowflake loading will be added later
-    scrape_task >> upload_s3_task
+    # Task 3: Upload to Snowflake
+    snowflake_task = PythonOperator(
+        task_id='upload_to_snowflake',
+        python_callable=upload_fortune500_jobs_to_snowflake,
+        provide_context=True,
+    )
+    
+    # Task 4: Run dbt transformations (transforms raw -> processed)
+    dbt_task = BashOperator(
+        task_id='run_dbt_transformations',
+        bash_command='export PATH="/home/airflow/.local/bin:$PATH" && cd /opt/airflow/dbt && dbt run --profiles-dir . --target prod',
+        env={
+            'DBT_PROFILES_DIR': '/opt/airflow/dbt',
+        },
+        trigger_rule='all_done',  # Continue even if previous tasks fail
+    )
+    
+    # Task 5: Print summary
+    summary_task = PythonOperator(
+        task_id='print_summary',
+        python_callable=print_pipeline_summary,
+        provide_context=True,
+    )
+    
+    # Pipeline: Scrape -> S3 -> Snowflake -> dbt -> Summary
+    scrape_task >> s3_task >> snowflake_task >> dbt_task >> summary_task

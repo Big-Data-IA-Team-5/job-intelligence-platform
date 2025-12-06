@@ -77,6 +77,16 @@ with tab1:
     
     st.divider()
     
+    # Important notice
+    st.info("""
+    ℹ️ **Resume Requirements:**
+    - Must include contact information (email/phone)
+    - Must have experience or education sections
+    - Must contain professional/technical keywords
+    - Must include work history dates
+    - Random documents or non-resume text will be rejected
+    """)
+    
     # Text input
     resume_text = st.text_area(
         "📝 Paste your resume text",
@@ -97,7 +107,7 @@ with tab1:
         uploaded_file = st.file_uploader(
             "Choose a file",
             type=['txt', 'pdf', 'docx'],
-            help="Supported formats: TXT, PDF, DOCX (max 200MB)",
+            help="Supported formats: TXT, PDF, DOCX (max 5MB) - File validation enforced",
             key="resume_uploader"
         )
     except Exception as e:
@@ -105,18 +115,32 @@ with tab1:
         st.info("💡 Please paste your resume text in the box above instead")
         uploaded_file = None
     
-    # Parse uploaded file
+    # Parse uploaded file with validation
     if uploaded_file is not None:
         try:
             file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
             
+            # File size guardrail - 5MB max
             if file_size_mb > 5:
-                st.warning(f"⚠️ Large file detected ({file_size_mb:.2f} MB). Processing may take a moment...")
+                st.error(f"❌ File too large: {file_size_mb:.2f} MB. Maximum allowed: 5 MB")
+                st.info("💡 Try compressing your PDF or converting to text format")
+                uploaded_file = None
+                resume_text = ""
+            elif file_size_mb < 0.0001:  # < 100 bytes
+                st.error("❌ File is empty or corrupted")
+                uploaded_file = None
+                resume_text = ""
             else:
                 st.info(f"📁 File: {uploaded_file.name} ({file_size_mb:.2f} MB)")
             
+            # Validate file extension (guardrail)
+            if uploaded_file and not any(uploaded_file.name.lower().endswith(ext) for ext in ['.txt', '.pdf', '.docx']):
+                st.error(f"❌ Invalid file type: {uploaded_file.name}. Only TXT, PDF, and DOCX files are allowed.")
+                resume_text = ""
+                uploaded_file = None
+            
             # Parse based on file type
-            if uploaded_file.name.endswith('.txt'):
+            if uploaded_file and uploaded_file.name.endswith('.txt'):
                 try:
                     resume_text = uploaded_file.read().decode('utf-8')
                     st.success(f"✅ Text file parsed successfully - {len(resume_text)} characters")
@@ -124,7 +148,7 @@ with tab1:
                     st.error(f"Error reading text file: {str(e)}")
                     resume_text = ""
             
-            elif uploaded_file.name.endswith('.pdf'):
+            elif uploaded_file and uploaded_file.name.endswith('.pdf'):
                 try:
                     import PyPDF2
                     from io import BytesIO
@@ -151,7 +175,7 @@ with tab1:
                     st.info("💡 Tip: Try converting your PDF to text or using a different PDF file")
                     resume_text = ""
             
-            elif uploaded_file.name.endswith('.docx'):
+            elif uploaded_file and uploaded_file.name.endswith('.docx'):
                 try:
                     import docx
                     from io import BytesIO
@@ -203,8 +227,20 @@ with tab1:
                         
                         if not response:
                             st.error("❌ No response from server. Please check if backend is running.")
-                        elif response.get('error'):
-                            st.error(f"❌ Error: {response.get('detail', response.get('error'))}")
+                        elif response.get('error') or response.get('detail'):
+                            error_detail = response.get('detail', response.get('error'))
+                            st.error(f"❌ Validation Error: {error_detail}")
+                            
+                            # Show helpful tips based on error
+                            if "doesn't appear to be a resume" in str(error_detail):
+                                st.warning("""
+                                **💡 Tips for a valid resume:**
+                                - Include your contact information (email, phone, LinkedIn)
+                                - Add work experience with dates (e.g., 2020-2023)
+                                - List your education (degree, university)
+                                - Include technical skills and projects
+                                - Use professional keywords related to your field
+                                """)
                         elif response.get('status') == 'success':
                             st.success("✅ Resume matched successfully!")
                             

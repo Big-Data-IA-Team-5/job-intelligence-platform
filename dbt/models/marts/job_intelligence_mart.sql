@@ -43,7 +43,7 @@ enriched AS (
         total_petitions,
         avg_approval_rate,
         
-        -- Embeddings for semantic search
+        -- Embeddings for semantic search (stored as VARIANT)
         description_embedding,
         
         -- Metadata

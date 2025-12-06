@@ -8,10 +8,16 @@ from pathlib import Path
 
 def load_secrets():
     """Load secrets from secrets.json file"""
-    # Look for secrets.json in project root (one level above /airflow/)
-    current_dir = Path(__file__).resolve()
-    project_root = current_dir.parent.parent.parent.parent
-    secrets_path = project_root / 'secrets.json'
+    # Try Docker mount location first, then local development path
+    docker_path = Path('/opt/airflow/secrets/secrets.json')
+    
+    if docker_path.exists():
+        secrets_path = docker_path
+    else:
+        # Local development: look in project root
+        current_dir = Path(__file__).resolve()
+        project_root = current_dir.parent.parent.parent.parent
+        secrets_path = project_root / 'secrets.json'
     
     if not secrets_path.exists():
         raise FileNotFoundError(f"secrets.json not found at {secrets_path}")

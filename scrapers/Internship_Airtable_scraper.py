@@ -10,6 +10,7 @@ from selenium.common.exceptions import (
     TimeoutException,
     NoSuchElementException
 )
+from webdriver_manager.chrome import ChromeDriverManager
 import time
 import json
 import csv
@@ -386,7 +387,8 @@ class InternshipAirtableScraper:
                     if title and len(title) > 3 and title not in seen_titles:
                         date_posted = job.get('date_posted', '')
                         
-                        if self.is_within_timeframe(date_posted):
+                        # Accept jobs with NO date OR within timeframe
+                        if not date_posted or self.is_within_timeframe(date_posted):
                             seen_titles.add(title)
                             
                             # Standardize to unified schema
@@ -504,17 +506,48 @@ class InternshipAirtableScraper:
                     chrome_options.add_experimental_option('useAutomationExtension', False)
                     chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
                     chrome_options.page_load_strategy = 'normal'
-                    driver = webdriver.Chrome(options=chrome_options)
-                    with self.lock:
-                        logger.info("✓ Chrome driver initialized for internship scraping")
+                    # Use Selenium Grid with retry logic
+                    selenium_url = os.getenv('SELENIUM_REMOTE_URL', 'http://selenium-chrome:4444/wd/hub')
+                    
+                    # Retry connection to Selenium Grid with exponential backoff
+                    max_connection_retries = 3
+                    for retry in range(max_connection_retries):
+                        try:
+                            driver = webdriver.Remote(command_executor=selenium_url, options=chrome_options)
+                            with self.lock:
+                                logger.info("✓ Chrome driver initialized for internship scraping")
+                            break
+                        except Exception as e:
+                            if retry < max_connection_retries - 1:
+                                wait_time = (retry + 1) * 5  # 5, 10, 15 seconds
+                                with self.lock:
+                                    logger.warning(f"⚠️  Failed to connect to Selenium Grid (attempt {retry + 1}/{max_connection_retries}): {str(e)}")
+                                    logger.info(f"⏳ Retrying in {wait_time} seconds...")
+                                time.sleep(wait_time)
+                            else:
+                                with self.lock:
+                                    logger.error(f"❌ Failed to connect to Selenium Grid after {max_connection_retries} attempts")
+                                raise
                 
                 with self.lock:
                     logger.info(f"\n🌐 Loading {url}...")
                 driver.get(url)
                 
                 with self.lock:
-                    logger.info("⏳ Waiting for Airtable to load (30 seconds)...")
-                time.sleep(30)
+                    logger.info("⏳ Waiting for Airtable to load...")
+                
+                # Wait for Airtable to fully render the data rows (reduced timeout)
+                try:
+                    WebDriverWait(driver, 30).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, 'div.dataRow[data-rowid]'))
+                    )
+                    with self.lock:
+                        logger.info("✓ Table rows detected")
+                    time.sleep(5)  # Brief wait for stabilization
+                except TimeoutException:
+                    with self.lock:
+                        logger.warning("⚠️  Timeout waiting for dataRow elements - using fallback wait...")
+                    time.sleep(15)  # Shorter fallback
                 
                 with self.lock:
                     logger.info("\n🔄 Scrolling horizontally to load all columns...")
@@ -647,16 +680,16 @@ class InternshipAirtableScraper:
     
     def save_results(self, all_results):
         """Save scraped internships to files"""
-        os.makedirs('airflow/scraped_jobs', exist_ok=True)
+        os.makedirs('/opt/airflow/scraped_jobs', exist_ok=True)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         hours = self.hours_lookback
         base_filename = f"internships_all_{hours}h_{timestamp}"
         
-        json_file = f"airflow/scraped_jobs/{base_filename}.json"
-        metadata_file = f"airflow/scraped_jobs/{base_filename}_metadata.json"
-        csv_file = f"airflow/scraped_jobs/{base_filename}.csv"
-        md_file = f"airflow/scraped_jobs/{base_filename}.md"
+        json_file = f"/opt/airflow/scraped_jobs/{base_filename}.json"
+        metadata_file = f"/opt/airflow/scraped_jobs/{base_filename}_metadata.json"
+        csv_file = f"/opt/airflow/scraped_jobs/{base_filename}.csv"
+        md_file = f"/opt/airflow/scraped_jobs/{base_filename}.md"
         
         # Save clean JSON (jobs only - no metadata)
         with open(json_file, 'w', encoding='utf-8') as f:

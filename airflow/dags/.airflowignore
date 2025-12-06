@@ -1,0 +1,17 @@
+# Airflow ignore patterns
+# Exclude utility modules and common libraries from DAG parsing
+
+# Ignore common utility folder
+common/.*
+
+# Ignore Python cache
+__pycache__/.*
+.*\.pyc
+
+# Ignore any test files
+test_.*\.py
+.*_test\.py
+
+# Ignore documentation
+.*\.md
+.*\.txt

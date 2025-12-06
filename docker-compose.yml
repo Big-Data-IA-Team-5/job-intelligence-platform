@@ -38,6 +38,8 @@ services:
     volumes:
       - ./backend:/app
       - ./config:/app/config
+      - ./secrets.json:/app/secrets.json:ro
+      - ./snowflake/agents:/app/snowflake/agents:ro
     networks:
       - job-intelligence-network
     depends_on:
@@ -53,8 +55,16 @@ services:
       - "8501:8501"
     environment:
       - BACKEND_URL=http://backend:8000
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT}
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER}
+      - SNOWFLAKE_PASSWORD=${SNOWFLAKE_PASSWORD}
+      - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
+      - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE}
+      - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA}
+      - SNOWFLAKE_ROLE=${SNOWFLAKE_ROLE}
     volumes:
       - ./frontend:/app
+      - ./secrets.json:/app/secrets.json:ro
     networks:
       - job-intelligence-network
     depends_on:
