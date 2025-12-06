@@ -18,6 +18,19 @@ def clean_nan_values(value):
         return None
     return value
 
+def format_value(value):
+    """Format value for SQL INSERT statement"""
+    value = clean_nan_values(value)
+    if value is None:
+        return 'NULL'
+    elif isinstance(value, (int, float)):
+        return str(value)
+    elif isinstance(value, bool):
+        return 'TRUE' if value else 'FALSE'
+    else:
+        # Escape single quotes for SQL
+        return f"'{str(value).replace(chr(39), chr(39)+chr(39))}'"
+
 def load_secrets():
     """Load secrets from secrets.json file"""
     # Try Docker mount locations first, then local development path
@@ -147,39 +160,47 @@ def upload_to_snowflake(
                 PARSE_JSON(%s)
             """
             
-            # Prepare all values for batch insert
-            batch_values = []
-            for record in data:
-                raw_json_str = json.dumps(record)
-                values = (
-                    clean_nan_values(record.get('job_id')),
-                    clean_nan_values(record.get('url')),
-                    clean_nan_values(record.get('title')),
-                    clean_nan_values(record.get('company')),
-                    clean_nan_values(record.get('location')),
-                    clean_nan_values(record.get('description')),
-                    clean_nan_values(record.get('snippet')),
-                    clean_nan_values(record.get('salary_min')),
-                    clean_nan_values(record.get('salary_max')),
-                    clean_nan_values(record.get('salary_text')),
-                    clean_nan_values(record.get('job_type')),
-                    clean_nan_values(record.get('posted_date')),
-                    clean_nan_values(record.get('work_model')),
-                    clean_nan_values(record.get('department')),
-                    clean_nan_values(record.get('company_size')),
-                    clean_nan_values(record.get('qualifications')),
-                    clean_nan_values(record.get('h1b_sponsored')),
-                    clean_nan_values(record.get('is_new_grad')),
-                    clean_nan_values(record.get('category')),
-                    clean_nan_values(record.get('source', 'unknown')),
-                    raw_json_str
-                )
-                batch_values.append(values)
+            # Batch insert in chunks of 1000 rows (Snowflake best practice)
+            batch_size = 1000
+            rows_inserted = 0
             
-            # Execute batch insert - all rows in single transaction
-            cursor.executemany(insert_query, batch_values)
-            rows_inserted = len(batch_values)
-            print(f"✅ Batch inserted {rows_inserted} jobs in single transaction")
+            for i in range(0, len(data), batch_size):
+                batch = data[i:i + batch_size]
+                
+                # Build VALUES clause for batch
+                values_list = []
+                for record in batch:
+                    raw_json_str = json.dumps(record).replace("'", "''")
+                    values_list.append(f"""(
+                        {format_value(record.get('job_id'))},
+                        {format_value(record.get('url'))},
+                        {format_value(record.get('title'))},
+                        {format_value(record.get('company'))},
+                        {format_value(record.get('location'))},
+                        {format_value(record.get('description'))},
+                        {format_value(record.get('snippet'))},
+                        {format_value(record.get('salary_min'))},
+                        {format_value(record.get('salary_max'))},
+                        {format_value(record.get('salary_text'))},
+                        {format_value(record.get('job_type'))},
+                        {format_value(record.get('posted_date'))},
+                        {format_value(record.get('work_model'))},
+                        {format_value(record.get('department'))},
+                        {format_value(record.get('company_size'))},
+                        {format_value(record.get('qualifications'))},
+                        {format_value(record.get('h1b_sponsored'))},
+                        {format_value(record.get('is_new_grad'))},
+                        {format_value(record.get('category'))},
+                        {format_value(record.get('source', 'unknown'))},
+                        '{raw_json_str}'
+                    )""")
+                
+                # Execute batch INSERT with VALUES
+                batch_insert_query = insert_query.replace('VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
+                                                         f"VALUES {', '.join(values_list)}")
+                cursor.execute(batch_insert_query)
+                rows_inserted += len(batch)
+                print(f"✅ Batch inserted {len(batch)} jobs (total: {rows_inserted}/{len(data)})")
         
         conn.commit()
         print(f"Successfully inserted {rows_inserted} rows into {database}.{schema}.{table}")
