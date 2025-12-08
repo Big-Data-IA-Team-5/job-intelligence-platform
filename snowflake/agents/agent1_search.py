@@ -135,6 +135,7 @@ class JobSearchAgent:
         Returns:
             {
                 "job_titles": ["software engineer", "qa engineer"],
+                "company": "Amazon",
                 "location": "Boston",
                 "visa_type": "H-1B",
                 "work_model": "remote",
@@ -168,6 +169,7 @@ Columns: title, company, location, description, requirements, skills, experience
 
 Extract these fields:
 - job_titles: list of job titles (be comprehensive for general terms like "data related")
+- company: company name if mentioned (e.g., "Amazon", "Google", "Microsoft"), or null
 - location: city or state if mentioned
 - visa_type: CPT, OPT, H-1B, or null
 - work_model: remote, hybrid, onsite, or null  
@@ -180,10 +182,11 @@ Extract these fields:
 Query: "{query}"
 
 Examples:
-- "data related jobs" → {{"job_titles": ["data analyst", "data scientist", "data engineer", "business analyst"], "location": null, "visa_type": null, "work_model": null, "job_type": null, "job_category": "Data", "new_grad_only": false, "h1b_required": false, "min_approval_rate": null}}
-- "software QA jobs with h1b" → {{"job_titles": ["QA engineer", "quality assurance", "software tester"], "location": null, "visa_type": "H-1B", "work_model": null, "job_type": null, "job_category": "Engineering", "new_grad_only": false, "h1b_required": true, "min_approval_rate": null}}
-- "entry level remote data analyst in Boston" → {{"job_titles": ["data analyst"], "location": "Boston", "visa_type": null, "work_model": "remote", "job_type": null, "job_category": "Data", "new_grad_only": true, "h1b_required": false, "min_approval_rate": null}}
-- "jobs with reliable h1b sponsors" → {{"job_titles": [], "location": null, "visa_type": "H-1B", "work_model": null, "job_type": null, "job_category": null, "new_grad_only": false, "h1b_required": true, "min_approval_rate": 0.7}}
+- "Amazon jobs" → {{"job_titles": [], "company": "Amazon", "location": null, "visa_type": null, "work_model": null, "job_type": null, "job_category": null, "new_grad_only": false, "h1b_required": false, "min_approval_rate": null}}
+- "data related jobs" → {{"job_titles": ["data analyst", "data scientist", "data engineer", "business analyst"], "company": null, "location": null, "visa_type": null, "work_model": null, "job_type": null, "job_category": "Data", "new_grad_only": false, "h1b_required": false, "min_approval_rate": null}}
+- "software engineer at Google" → {{"job_titles": ["software engineer"], "company": "Google", "location": null, "visa_type": null, "work_model": null, "job_type": null, "job_category": "Engineering", "new_grad_only": false, "h1b_required": false, "min_approval_rate": null}}
+- "entry level remote data analyst in Boston" → {{"job_titles": ["data analyst"], "company": null, "location": "Boston", "visa_type": null, "work_model": "remote", "job_type": null, "job_category": "Data", "new_grad_only": true, "h1b_required": false, "min_approval_rate": null}}
+- "jobs with reliable h1b sponsors" → {{"job_titles": [], "company": null, "location": null, "visa_type": "H-1B", "work_model": null, "job_type": null, "job_category": null, "new_grad_only": false, "h1b_required": true, "min_approval_rate": 0.7}}
 
 Return ONLY a valid JSON object.
 """
@@ -244,6 +247,12 @@ Return ONLY a valid JSON object.
                 ) as relevance_score
             FROM jobs_processed
             WHERE 1=1
+                AND location NOT LIKE '% | %'  -- Exclude international locations like 'AR | Remote', 'BR | Remote'
+                AND location NOT LIKE '%Argentina%'
+                AND location NOT LIKE '%Brazil%'
+                AND location NOT LIKE '%India%'
+                AND location NOT LIKE '%Canada%'
+                AND location NOT LIKE '%Mexico%'
         """
         
         # Add job title filters from LLM parsing
@@ -258,6 +267,12 @@ Return ONLY a valid JSON object.
             
             if title_conditions:
                 sql += f" AND ({' OR '.join(title_conditions)})"
+        
+        # Add company filter from LLM
+        company = parsed.get('company')
+        if company:
+            sanitized_company = str(company).replace("'", "''")
+            sql += f" AND UPPER(company_clean) LIKE '%{sanitized_company.upper()}%'"
         
         # Add location filter from LLM
         location = parsed.get('location')

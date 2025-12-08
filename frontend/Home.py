@@ -3,6 +3,7 @@ Job Intelligence AI - ChatGPT/Claude Style Interface
 """
 import streamlit as st
 from utils.api_client import APIClient
+from utils.context_manager import ConversationContext
 import io
 from datetime import datetime
 
@@ -54,6 +55,8 @@ if 'messages' not in st.session_state:
 if 'uploaded_resume' not in st.session_state:
     st.session_state.uploaded_resume = None
     st.session_state.resume_text = None
+if 'context_manager' not in st.session_state:
+    st.session_state.context_manager = ConversationContext(max_turns=10)
 
 with st.sidebar:
     st.markdown("## 🤖 Job Intelligence AI")
@@ -68,6 +71,26 @@ with st.sidebar:
     if st.session_state.messages:
         st.divider()
         st.caption(f"💬 {len(st.session_state.messages)} messages")
+        
+        # Show context awareness status
+        summary = st.session_state.context_manager.get_summary()
+        if summary['total_turns'] > 0:
+            st.divider()
+            st.markdown("**🧠 Context Awareness**")
+            
+            entities = summary['entities_tracked']
+            if entities['companies'] > 0:
+                st.caption(f"🏢 Tracking {entities['companies']} companies")
+            if entities['locations'] > 0:
+                st.caption(f"📍 Tracking {entities['locations']} locations")
+            if summary['last_intent']:
+                st.caption(f"💡 Last topic: {summary['last_intent'].replace('_', ' ').title()}")
+            
+            # Clear context button
+            if st.button("🔄 Clear Context", help="Reset conversation context"):
+                st.session_state.context_manager.clear_context()
+                st.session_state.messages = []
+                st.rerun()
 
 if not st.session_state.messages:
     hour = datetime.now().hour
@@ -181,22 +204,8 @@ if prompt:
             from urllib.parse import quote
             
             try:
-                # Build conversation context from recent messages (last 3 exchanges)
-                recent_messages = st.session_state.messages[-6:] if len(st.session_state.messages) > 0 else []
-                context_parts = []
-                for msg in recent_messages:
-                    if msg["role"] == "user":
-                        context_parts.append(f"User: {msg['content'][:200]}")
-                    elif msg["role"] == "assistant" and "Found" in msg["content"]:
-                        # Include job results for context
-                        context_parts.append(f"Assistant: {msg['content'][:300]}")
-                
-                conversation_context = "\n".join(context_parts) if context_parts else ""
-                
-                # Enhance prompt with conversation context
-                enhanced_prompt = prompt
-                if conversation_context:
-                    enhanced_prompt = f"Previous context:\n{conversation_context}\n\nCurrent question: {prompt}"
+                # Use intelligent context manager to enhance the query
+                enhanced_prompt, metadata = st.session_state.context_manager.enhance_query(prompt)
                 
                 # Build request with resume context if available
                 url = f"/api/chat/ask?question={quote(enhanced_prompt)}"
@@ -206,8 +215,14 @@ if prompt:
                 response = st.session_state.api_client.post(url)
                 
                 if response and "answer" in response:
-                    st.markdown(response["answer"])
-                    st.session_state.messages.append({"role": "assistant", "content": response["answer"]})
+                    answer = response["answer"]
+                    st.markdown(answer)
+                    
+                    # Update context manager with this conversation turn
+                    st.session_state.context_manager.update_context(prompt, answer)
+                    
+                    # Add to message history
+                    st.session_state.messages.append({"role": "assistant", "content": answer})
                 else:
                     st.error("Couldn't process request")
                     st.session_state.messages.append({"role": "assistant", "content": "Error occurred"})

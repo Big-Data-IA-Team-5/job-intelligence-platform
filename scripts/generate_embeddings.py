@@ -46,7 +46,7 @@ def generate_embeddings():
         
         if missing <= 0:
             print("✅ All jobs already in JOBS_PROCESSED!")
-            return
+            return None
         
         # Step 2: Get jobs that need to be added to JOBS_PROCESSED
         print("🔍 Finding jobs missing from JOBS_PROCESSED...")
@@ -62,7 +62,7 @@ def generate_embeddings():
         
         if not missing_job_ids:
             print("✅ No missing jobs!")
-            return
+            return None
         
         # Step 3: Sync JOBS_PROCESSED with existing embeddings
         print(f"\n🚀 Syncing JOBS_PROCESSED with embedded jobs...")
@@ -164,6 +164,8 @@ def generate_embeddings():
         print(f"   • New jobs processed: {total_processed:,}")
         print(f"   • Total searchable jobs: {final_count:,}")
         
+        return total_processed
+        
     except Exception as e:
         print(f"\n❌ Error: {e}")
         raise
@@ -172,5 +174,39 @@ def generate_embeddings():
         conn.close()
         print("\n🔌 Connection closed")
 
+def main():
+    """Main function that loops until all jobs are processed"""
+    print("🚀 Starting embedding generation (will process all pending jobs)")
+    print("=" * 80)
+    
+    iteration = 0
+    total_processed = 0
+    
+    while True:
+        iteration += 1
+        print(f"\n📍 Iteration {iteration}")
+        print("-" * 80)
+        
+        try:
+            result = generate_embeddings()
+            
+            # Check if we're done
+            if result is None:  # No more jobs to process
+                break
+                
+            total_processed += 5000  # Each iteration processes up to 5000
+            
+        except Exception as e:
+            print(f"\n❌ Error in iteration {iteration}: {e}")
+            break
+    
+    print("\n" + "=" * 80)
+    print("🎉 ALL JOBS PROCESSED!")
+    print("=" * 80)
+    print(f"   • Total iterations: {iteration}")
+    print(f"   • Approximate jobs processed: {total_processed:,}")
+    
+    return {"iterations": iteration, "total_processed": total_processed}
+
 if __name__ == "__main__":
-    generate_embeddings()
+    main()
