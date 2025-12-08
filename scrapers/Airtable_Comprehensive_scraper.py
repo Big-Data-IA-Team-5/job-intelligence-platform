@@ -240,152 +240,170 @@ class ComprehensiveAirtableScraper:
     def scrape_category_comprehensive(self, category_name, url, idx, total):
         """Comprehensively scrape a single category - each worker gets its own driver"""
         driver = None
+        start_time = time.time()
+        CATEGORY_TIMEOUT = 900  # 15 minutes max per category
         
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                with self.lock:
-                    logger.info(f"\n{'=' * 80}")
-                    logger.info(f"📂 CATEGORY {idx}/{total}: {category_name.replace('_', ' ')}")
-                    if attempt > 1:
-                        logger.info(f"🔄 Retry attempt {attempt}/{self.max_retries}")
-                    logger.info(f"{'=' * 80}")
-                
-                # Create dedicated driver for this worker
-                if driver is None:
-                    chrome_options = Options()
-                    chrome_options.add_argument('--headless')
-                    chrome_options.add_argument('--no-sandbox')
-                    chrome_options.add_argument('--disable-dev-shm-usage')
-                    chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-                    chrome_options.add_argument('--disable-gpu')
-                    chrome_options.add_argument('--window-size=1920,1080')
-                    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-                    chrome_options.add_experimental_option('useAutomationExtension', False)
-                    chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-                    chrome_options.page_load_strategy = 'normal'
-                    # Use Selenium Grid with retry logic
-                    selenium_url = os.getenv('SELENIUM_REMOTE_URL', 'http://selenium-chrome:4444/wd/hub')
-                    
-                    # Retry connection to Selenium Grid with exponential backoff
-                    max_connection_retries = 3
-                    for retry in range(max_connection_retries):
-                        try:
-                            driver = webdriver.Remote(command_executor=selenium_url, options=chrome_options)
-                            with self.lock:
-                                logger.info("✓ Chrome driver initialized")
-                            break
-                        except Exception as e:
-                            if retry < max_connection_retries - 1:
-                                wait_time = (retry + 1) * 5  # 5, 10, 15 seconds
-                                with self.lock:
-                                    logger.warning(f"⚠️  Failed to connect to Selenium Grid (attempt {retry + 1}/{max_connection_retries}): {str(e)}")
-                                    logger.info(f"⏳ Retrying in {wait_time} seconds...")
-                                time.sleep(wait_time)
-                            else:
-                                with self.lock:
-                                    logger.error(f"❌ Failed to connect to Selenium Grid after {max_connection_retries} attempts")
-                                raise
-                
-                with self.lock:
-                    logger.info(f"\n🌐 Loading {url}...")
-                driver.get(url)
-                
-                with self.lock:
-                    logger.info("⏳ Waiting for table to load...")
-                
-                # Wait for Airtable to fully render the data rows (reduced timeout)
+        try:  # OUTER try-finally to ensure driver cleanup
+            for attempt in range(1, self.max_retries + 1):
                 try:
-                    WebDriverWait(driver, 30).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, 'div.dataRow[data-rowid]'))
-                    )
-                    with self.lock:
-                        logger.info("✓ Table rows detected")
-                    time.sleep(5)  # Brief wait for stabilization
-                except TimeoutException:
-                    with self.lock:
-                        logger.warning("⚠️  Timeout waiting for dataRow elements - using fallback wait...")
-                    time.sleep(15)  # Shorter fallback
-                
-                with self.lock:
-                    logger.info("\n🔄 Scrolling horizontally to load all columns...")
-                self.scroll_horizontally(driver)
-                
-                cutoff_str = self.cutoff_date.strftime('%Y-%m-%d %H:%M')
-                with self.lock:
-                    logger.info(f"\n📜 Extracting jobs posted after {cutoff_str}...")
-                    logger.info(f"   (Last {self.hours_lookback} hours / {self.hours_lookback/24:.1f} days)")
-                
-                jobs = self.extract_all_jobs_from_category(driver, category_name)
-                
-                with self.lock:
-                    logger.info(f"\n✅ Extracted {len(jobs)} jobs from {category_name}")
-                
-                # Add to global collection
-                with self.lock:
-                    self.all_jobs.extend(jobs)
+                    # Check if we've exceeded category timeout
+                    if time.time() - start_time > CATEGORY_TIMEOUT:
+                        with self.lock:
+                            logger.warning(f"⏱️  {category_name} exceeded 15min timeout - stopping")
+                        break
                     
-                    if len(jobs) == 0:
-                        self.empty_categories.append(category_name)
-                    else:
-                        self.total_jobs_found += len(jobs)
-                
-                # Cleanup
-                if driver:
+                    with self.lock:
+                        logger.info(f"\n{'=' * 80}")
+                        logger.info(f"📂 CATEGORY {idx}/{total}: {category_name.replace('_', ' ')}")
+                        if attempt > 1:
+                            logger.info(f"🔄 Retry attempt {attempt}/{self.max_retries}")
+                        logger.info(f"{'=' * 80}")
+                    
+                    # Create dedicated driver for this worker
+                    if driver is None:
+                        chrome_options = Options()
+                        chrome_options.add_argument('--headless')
+                        chrome_options.add_argument('--no-sandbox')
+                        chrome_options.add_argument('--disable-dev-shm-usage')
+                        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+                        chrome_options.add_argument('--disable-gpu')
+                        chrome_options.add_argument('--window-size=1920,1080')
+                        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+                        chrome_options.add_experimental_option('useAutomationExtension', False)
+                        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+                        chrome_options.page_load_strategy = 'normal'
+                        # Use Selenium Grid with retry logic
+                        selenium_url = os.getenv('SELENIUM_REMOTE_URL', 'http://selenium-chrome:4444/wd/hub')
+                        
+                        # Retry connection to Selenium Grid with exponential backoff
+                        max_connection_retries = 3
+                        for retry in range(max_connection_retries):
+                            try:
+                                driver = webdriver.Remote(command_executor=selenium_url, options=chrome_options)
+                                with self.lock:
+                                    logger.info("✓ Chrome driver initialized")
+                                break
+                            except Exception as e:
+                                if retry < max_connection_retries - 1:
+                                    wait_time = (retry + 1) * 5  # 5, 10, 15 seconds
+                                    with self.lock:
+                                        logger.warning(f"⚠️  Failed to connect to Selenium Grid (attempt {retry + 1}/{max_connection_retries}): {str(e)}")
+                                        logger.info(f"⏳ Retrying in {wait_time} seconds...")
+                                    time.sleep(wait_time)
+                                else:
+                                    with self.lock:
+                                        logger.error(f"❌ Failed to connect to Selenium Grid after {max_connection_retries} attempts")
+                                    raise
+                    
+                    with self.lock:
+                        logger.info(f"\n🌐 Loading {url}...")
+                    driver.get(url)
+                    
+                    with self.lock:
+                        logger.info("⏳ Waiting for table to load...")
+                    
+                    # Wait for Airtable to fully render the data rows (reduced timeout)
                     try:
-                        driver.quit()
-                    except:
-                        pass
-                
-                return {
-                    'url': url,
-                    'job_count': len(jobs),
-                    'jobs': jobs.copy(),
-                    'status': 'success'
-                }
-                
-            except Exception as e:
-                with self.lock:
-                    logger.error(f"\n❌ Error on attempt {attempt}: {str(e)[:100]}")
-                if attempt < self.max_retries:
+                        WebDriverWait(driver, 30).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, 'div.dataRow[data-rowid]'))
+                        )
+                        with self.lock:
+                            logger.info("✓ Table rows detected")
+                        time.sleep(5)  # Brief wait for stabilization
+                    except TimeoutException:
+                        with self.lock:
+                            logger.warning("⚠️  Timeout waiting for dataRow elements - using fallback wait...")
+                        time.sleep(15)  # Shorter fallback
+                    
                     with self.lock:
-                        logger.info(f"⏳ Waiting 10 seconds before retry...")
-                    time.sleep(10)
+                        logger.info("\n🔄 Scrolling horizontally to load all columns...")
+                    self.scroll_horizontally(driver)
+                    
+                    cutoff_str = self.cutoff_date.strftime('%Y-%m-%d %H:%M')
+                    with self.lock:
+                        logger.info(f"\n📜 Extracting jobs posted after {cutoff_str}...")
+                        logger.info(f"   (Last {self.hours_lookback} hours / {self.hours_lookback/24:.1f} days)")
+                    
+                    jobs = self.extract_all_jobs_from_category(driver, category_name)
+                    
+                    with self.lock:
+                        logger.info(f"\n✅ Extracted {len(jobs)} jobs from {category_name}")
+                    
+                    # Add to global collection
+                    with self.lock:
+                        self.all_jobs.extend(jobs)
+                        
+                        if len(jobs) == 0:
+                            self.empty_categories.append(category_name)
+                        else:
+                            self.total_jobs_found += len(jobs)
+                    
+                    # Cleanup
                     if driver:
                         try:
                             driver.quit()
                         except:
                             pass
-                    driver = None
-                else:
-                    with self.lock:
-                        logger.error(f"✗ Failed after {self.max_retries} attempts")
-                        self.failed_categories.append(category_name)
-                    if driver:
-                        try:
-                            driver.quit()
-                        except:
-                            pass
+                    
                     return {
                         'url': url,
-                        'job_count': 0,
-                        'jobs': [],
-                        'status': 'failed',
-                        'error': str(e)[:200]
+                        'job_count': len(jobs),
+                        'jobs': jobs.copy(),
+                        'status': 'success'
                     }
+                    
+                except Exception as e:
+                    with self.lock:
+                        logger.error(f"\n❌ Error on attempt {attempt}: {str(e)[:100]}")
+                    if attempt < self.max_retries:
+                        with self.lock:
+                            logger.info(f"⏳ Waiting 10 seconds before retry...")
+                        time.sleep(10)
+                        if driver:
+                            try:
+                                driver.quit()
+                            except:
+                                pass
+                        driver = None
+                    else:
+                        with self.lock:
+                            logger.error(f"✗ Failed after {self.max_retries} attempts")
+                            self.failed_categories.append(category_name)
+                        if driver:
+                            try:
+                                driver.quit()
+                            except:
+                                pass
+                        return {
+                            'url': url,
+                            'job_count': 0,
+                            'jobs': [],
+                            'status': 'failed',
+                            'error': str(e)[:200]
+                        }
         
-        if driver:
-            try:
-                driver.quit()
-            except:
-                pass
-        
-        return {
-            'url': url,
-            'job_count': 0,
-            'jobs': [],
-            'status': 'failed',
-            'error': 'Max retries exceeded'
-        }
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
+            
+            return {
+                'url': url,
+                'job_count': 0,
+                'jobs': [],
+                'status': 'failed',
+                'error': 'Max retries exceeded'
+            }
+        finally:  # CRITICAL: Always cleanup driver to prevent zombie sessions
+            if driver:
+                try:
+                    driver.quit()
+                    with self.lock:
+                        logger.info(f"  🔌 Cleaned up driver for {category_name}")
+                except Exception as e:
+                    with self.lock:
+                        logger.warning(f"  ⚠️  Driver cleanup warning: {str(e)[:50]}")
     
     def scroll_horizontally(self, driver):
         """Scroll table horizontally to load all columns"""

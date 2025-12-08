@@ -169,7 +169,7 @@ Respond with ONLY a JSON object:
         # Call Mixtral LLM
         sql = f"""
             SELECT SNOWFLAKE.CORTEX.COMPLETE(
-                'mixtral-8x7b',
+                'mistral-large2',
                 '{prompt_escaped}'
             )
         """

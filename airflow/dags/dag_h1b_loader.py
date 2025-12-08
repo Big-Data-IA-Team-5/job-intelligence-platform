@@ -84,23 +84,10 @@ def load_h1b_data(**context):
         df = df[df['WORKSITE_STATE'].notna()]
         print(f"✓ Filtered to {len(df)} rows with valid worksite state")
     
-    # Select relevant columns
-    columns_to_keep = [
-        'CASE_NUMBER',
-        'EMPLOYER_NAME',
-        'JOB_TITLE',
-        'SOC_TITLE',
-        'WORKSITE_CITY',
-        'WORKSITE_STATE',
-        'WAGE_RATE_OF_PAY_FROM',
-        'WAGE_RATE_OF_PAY_TO',
-        'WAGE_UNIT_OF_PAY',
-        'H1B_DEPENDENT',
-        'WILLFUL_VIOLATOR'
-    ]
+    # Keep ALL 97 columns from H-1B data
+    print(f"✓ Keeping all {len(df.columns)} columns from H-1B CSV")
     
-    available_columns = [col for col in columns_to_keep if col in df.columns]
-    df = df[available_columns]
+    # No column filtering - we want all fields!
     
     # Write to output CSV
     print(f"✓ Writing final CSV...")
@@ -187,24 +174,13 @@ def upload_h1b_to_snowflake(**context):
     cursor = conn.cursor()
     
     try:
-        # Create table if not exists
-        print("🔧 Creating/verifying table schema...")
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS h1b_raw (
-                case_number VARCHAR,
-                employer_name VARCHAR,
-                job_title VARCHAR,
-                soc_title VARCHAR,
-                worksite_city VARCHAR,
-                worksite_state VARCHAR,
-                wage_rate_of_pay_from NUMBER,
-                wage_rate_of_pay_to NUMBER,
-                wage_unit_of_pay VARCHAR,
-                h1b_dependent VARCHAR,
-                willful_violator VARCHAR,
-                loaded_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
-            )
-        """)
+        # Table already exists with all 97 fields + loaded_at (98 columns total)
+        # Created via: snowflake/setup/02_create_tables.sql
+        print("✓ Using existing h1b_raw table with all 97 H-1B fields")
+        
+        # Truncate existing data before loading new quarterly data
+        print("🗑️ Truncating existing H-1B data...")
+        cursor.execute("TRUNCATE TABLE h1b_raw")
         
         # Use COPY INTO for native Snowflake loading (FAST!)
         print(f"🚀 Loading CSV from S3 using COPY INTO...")

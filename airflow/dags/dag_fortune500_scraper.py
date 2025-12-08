@@ -25,9 +25,9 @@ default_args = {
     'depends_on_past': False,
     'email_on_failure': False,
     'email_on_retry': False,
-    'retries': 2,
+    'retries': 1,
     'retry_delay': timedelta(minutes=15),
-    'execution_timeout': timedelta(hours=6),
+    'execution_timeout': timedelta(hours=8),  # 8 hours for 50 companies with fallbacks
 }
 
 def scrape_fortune500_jobs(**context):
@@ -87,34 +87,44 @@ def scrape_fortune500_jobs(**context):
     companies_to_scrape = [
         c for c in companies 
         if not progress.is_completed(c['name'])
-    ][:100]  # Scrape 100 companies per run for faster coverage
+    ][:50]  # Scrape 50 companies per run (optimized for 8-hour timeout)
     
     print(f"\n⚙️  Configuration:")
     print(f"   Companies to scrape: {len(companies_to_scrape)}")
-    print(f"   Max workers: 4")
+    print(f"   Max workers: 8")  # 8 workers for optimal performance
     print(f"   Time window: Last 15 days")
     
     all_jobs = []
     
     # Scrape companies in parallel - PRODUCTION OPTIMIZED
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = []
-        for idx, company_info in enumerate(companies_to_scrape):
-            future = executor.submit(
-                scrape_single_company,
-                company_info,
-                scraper,
-                progress,
-                idx
-            )
-            futures.append(future)
-        
-        # Collect results
-        for future in futures:
-            result = future.result()
-            if result['success'] and result['jobs']:
-                all_jobs.extend(result['jobs'])
-                progress.save_progress(result['company'])
+    try:
+        with ThreadPoolExecutor(max_workers=8) as executor:  # Using 8 workers for optimal performance
+            futures = []
+            for idx, company_info in enumerate(companies_to_scrape):
+                future = executor.submit(
+                    scrape_single_company,
+                    company_info,
+                    scraper,
+                    progress,
+                    idx
+                )
+                futures.append(future)
+            
+            # Collect results
+            for future in futures:
+                try:
+                    result = future.result(timeout=3600)  # 1 hour timeout per company
+                    if result['success'] and result['jobs']:
+                        all_jobs.extend(result['jobs'])
+                        progress.save_progress(result['company'])
+                except Exception as e:
+                    print(f"⚠️  Company failed: {str(e)[:100]}")
+    
+    finally:
+        # Cleanup Selenium drivers
+        print("\n🧹 Cleaning up Selenium drivers...")
+        if hasattr(scraper, 'http') and hasattr(scraper.http, 'cleanup_driver'):
+            scraper.http.cleanup_driver()
     
     print("\n" + "=" * 80)
     print("SCRAPING COMPLETED")
@@ -234,6 +244,7 @@ with DAG(
     )
     
     # Task 4: Run dbt transformations (transforms raw -> processed)
+    # Includes: classified_jobs, embedded_jobs (generates embeddings), jobs_processed
     dbt_task = BashOperator(
         task_id='run_dbt_transformations',
         bash_command='export PATH="/home/airflow/.local/bin:$PATH" && cd /opt/airflow/dbt && dbt run --profiles-dir . --target prod',
@@ -250,5 +261,5 @@ with DAG(
         provide_context=True,
     )
     
-    # Pipeline: Scrape -> S3 -> Snowflake -> dbt -> Summary
+    # Pipeline: Scrape -> S3 -> Snowflake -> dbt (includes embeddings) -> Summary
     scrape_task >> s3_task >> snowflake_task >> dbt_task >> summary_task

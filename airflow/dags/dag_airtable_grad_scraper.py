@@ -25,9 +25,9 @@ default_args = {
     'depends_on_past': False,
     'email_on_failure': False,
     'email_on_retry': False,
-    'retries': 2,
-    'retry_delay': timedelta(minutes=10),
-    'execution_timeout': timedelta(hours=2),
+    'retries': 1,
+    'retry_delay': timedelta(minutes=5),
+    'execution_timeout': timedelta(hours=3),  # 3 hours for comprehensive scraping
 }
 
 def scrape_grad_jobs(**context):
@@ -48,7 +48,7 @@ def scrape_grad_jobs(**context):
     
     # Configuration - PRODUCTION OPTIMIZED
     hours_lookback = 96   # 4 days (recent jobs only)
-    num_workers = 5       # 5 parallel workers for faster scraping (Selenium supports 20 max sessions)
+    num_workers = 3       # 3 parallel workers (reduced to prevent Selenium Grid overload)
     
     print(f"\n⚙️  Configuration:")
     print(f"   Time window: Last {hours_lookback} hours ({hours_lookback/24:.0f} days)")
@@ -191,6 +191,7 @@ with DAG(
     )
     
     # Task 4: Run dbt transformations (transforms raw -> processed)
+    # Includes: classified_jobs, embedded_jobs (generates embeddings), jobs_processed
     dbt_task = BashOperator(
         task_id='run_dbt_transformations',
         bash_command='export PATH="/home/airflow/.local/bin:$PATH" && cd /opt/airflow/dbt && dbt run --profiles-dir . --target prod',
@@ -208,5 +209,5 @@ with DAG(
         provide_context=True,
     )
     
-    # Pipeline: Scrape -> S3 -> Snowflake -> dbt -> Summary
+    # Pipeline: Scrape -> S3 -> Snowflake -> dbt (includes embeddings) -> Summary
     scrape_task >> s3_task >> snowflake_task >> dbt_task >> summary_task

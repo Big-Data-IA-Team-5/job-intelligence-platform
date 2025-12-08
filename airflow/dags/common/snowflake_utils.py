@@ -28,8 +28,16 @@ def format_value(value):
     elif isinstance(value, bool):
         return 'TRUE' if value else 'FALSE'
     else:
-        # Escape single quotes for SQL
-        return f"'{str(value).replace(chr(39), chr(39)+chr(39))}'"
+        # Escape single quotes for SQL (do NOT escape % - we're building literal SQL, not using placeholders)
+        escaped = str(value).replace("'", "''")
+        return f"'{escaped}'"
+
+def escape_json_for_sql(json_str):
+    """Escape JSON string for use in SQL string literal"""
+    # First escape backslashes, then single quotes
+    # This ensures proper escaping for Snowflake SQL strings
+    escaped = json_str.replace("\\", "\\\\").replace("'", "''")
+    return escaped
 
 def load_secrets():
     """Load secrets from secrets.json file"""
@@ -144,22 +152,6 @@ def upload_to_snowflake(
             print(f"✅ Batch inserted {rows_inserted} H1B records in single transaction")
         else:
             # Jobs table insert - BATCH INSERT for performance (industry standard)
-            insert_query = f"""
-            INSERT INTO {table} (
-                job_id, url, title, company, location, description, snippet,
-                salary_min, salary_max, salary_text, job_type, posted_date,
-                work_model, department, company_size, qualifications, 
-                h1b_sponsored, is_new_grad, category,
-                scraped_at, source, raw_json
-            )
-            SELECT 
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, 
-                CURRENT_TIMESTAMP(), 
-                %s, 
-                PARSE_JSON(%s)
-            """
-            
             # Batch insert in chunks of 1000 rows (Snowflake best practice)
             batch_size = 1000
             rows_inserted = 0
@@ -167,37 +159,46 @@ def upload_to_snowflake(
             for i in range(0, len(data), batch_size):
                 batch = data[i:i + batch_size]
                 
-                # Build VALUES clause for batch
-                values_list = []
+                # Build SELECT UNION ALL statements for batch
+                select_list = []
                 for record in batch:
-                    raw_json_str = json.dumps(record).replace("'", "''")
-                    values_list.append(f"""(
-                        {format_value(record.get('job_id'))},
-                        {format_value(record.get('url'))},
-                        {format_value(record.get('title'))},
-                        {format_value(record.get('company'))},
-                        {format_value(record.get('location'))},
-                        {format_value(record.get('description'))},
-                        {format_value(record.get('snippet'))},
-                        {format_value(record.get('salary_min'))},
-                        {format_value(record.get('salary_max'))},
-                        {format_value(record.get('salary_text'))},
-                        {format_value(record.get('job_type'))},
-                        {format_value(record.get('posted_date'))},
-                        {format_value(record.get('work_model'))},
-                        {format_value(record.get('department'))},
-                        {format_value(record.get('company_size'))},
-                        {format_value(record.get('qualifications'))},
-                        {format_value(record.get('h1b_sponsored'))},
-                        {format_value(record.get('is_new_grad'))},
-                        {format_value(record.get('category'))},
-                        {format_value(record.get('source', 'unknown'))},
-                        '{raw_json_str}'
-                    )""")
+                    # Use compact JSON without extra whitespace and properly escape for SQL
+                    raw_json_str = escape_json_for_sql(json.dumps(record, ensure_ascii=False, separators=(',', ':')))
+                    select_list.append(f"""SELECT
+                        {format_value(record.get('job_id'))} AS job_id,
+                        {format_value(record.get('url'))} AS url,
+                        {format_value(record.get('title'))} AS title,
+                        {format_value(record.get('company'))} AS company,
+                        {format_value(record.get('location'))} AS location,
+                        {format_value(record.get('description'))} AS description,
+                        {format_value(record.get('snippet'))} AS snippet,
+                        {format_value(record.get('salary_min'))} AS salary_min,
+                        {format_value(record.get('salary_max'))} AS salary_max,
+                        {format_value(record.get('salary_text'))} AS salary_text,
+                        {format_value(record.get('job_type'))} AS job_type,
+                        {format_value(record.get('posted_date'))} AS posted_date,
+                        {format_value(record.get('work_model'))} AS work_model,
+                        {format_value(record.get('department'))} AS department,
+                        {format_value(record.get('company_size'))} AS company_size,
+                        {format_value(record.get('qualifications'))} AS qualifications,
+                        {format_value(record.get('h1b_sponsored'))} AS h1b_sponsored,
+                        {format_value(record.get('is_new_grad'))} AS is_new_grad,
+                        {format_value(record.get('category'))} AS category,
+                        CURRENT_TIMESTAMP() AS scraped_at,
+                        {format_value(record.get('source', 'unknown'))} AS source,
+                        PARSE_JSON('{raw_json_str}') AS raw_json""")
                 
-                # Execute batch INSERT with VALUES
-                batch_insert_query = insert_query.replace('VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', 
-                                                         f"VALUES {', '.join(values_list)}")
+                # Execute batch INSERT with SELECT UNION ALL
+                batch_insert_query = f"""
+                INSERT INTO {table} (
+                    job_id, url, title, company, location, description, snippet,
+                    salary_min, salary_max, salary_text, job_type, posted_date,
+                    work_model, department, company_size, qualifications, 
+                    h1b_sponsored, is_new_grad, category,
+                    scraped_at, source, raw_json
+                )
+                {' UNION ALL '.join(select_list)}
+                """
                 cursor.execute(batch_insert_query)
                 rows_inserted += len(batch)
                 print(f"✅ Batch inserted {len(batch)} jobs (total: {rows_inserted}/{len(data)})")

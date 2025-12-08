@@ -1,0 +1,19 @@
+{
+  "scraped_at": "2025-12-07T05:23:22.804413",
+  "cutoff_date": "2025-12-06T05:21:41.596528",
+  "time_range_hours": 24,
+  "total_jobs": 0,
+  "total_categories": 2,
+  "successful_categories": 2,
+  "failed_categories": 0,
+  "category_breakdown": {
+    "Software_Engineering": {
+      "job_count": 0,
+      "status": "success"
+    },
+    "Data_Engineer": {
+      "job_count": 0,
+      "status": "success"
+    }
+  }
+}

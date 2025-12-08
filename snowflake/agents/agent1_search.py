@@ -129,7 +129,8 @@ class JobSearchAgent:
     
     def _parse_query_with_llm(self, query: str, cursor) -> Dict:
         """
-        Use Snowflake Cortex LLM to parse natural language query into structured search intent.
+        Use Snowflake Cortex FLAGSHIP LLM (mistral-large2) for text-to-SQL query parsing.
+        Industry-level accuracy for complex natural language understanding.
         
         Returns:
             {
@@ -145,9 +146,17 @@ class JobSearchAgent:
             }
         """
         try:
-            prompt = f"""You are a precise job search query parser. Parse this query into structured parameters.
+            # Using mistral-large2 (FLAGSHIP) for maximum text-to-SQL accuracy
+            prompt = f"""You are an expert SQL query generator and job search assistant powered by Snowflake Cortex.
+Your task is to parse natural language into precise structured parameters for database queries.
 
-IMPORTANT RULES:
+**DATABASE SCHEMA:**
+Table: JOBS_PROCESSED (22,339 jobs)
+Columns: title, company, location, description, requirements, skills, experience_level, 
+         education_level, job_type, work_model, visa_category, h1b_sponsor, salary_min, 
+         salary_max, job_category, is_new_grad, approval_rate, date_posted
+
+**PARSING RULES - CRITICAL:
 1. Extract ALL relevant job titles mentioned or implied
 2. When user says "data related" or "data jobs", include: data analyst, data scientist, data engineer, business analyst, BI analyst
 3. When user says "software related" or "software jobs", include: software engineer, software developer, backend engineer, frontend engineer
@@ -181,7 +190,7 @@ Return ONLY a valid JSON object.
             
             llm_sql = f"""
                 SELECT SNOWFLAKE.CORTEX.COMPLETE(
-                    'mixtral-8x7b',
+                    'mistral-large2',
                     '{prompt.replace("'", "''")}'
                 ) as parsed_query
             """

@@ -1491,13 +1491,20 @@ class HTTPClient:
         
         return None
     
-    def __del__(self):
-        """Cleanup Selenium driver"""
+    def cleanup_driver(self):
+        """Explicitly cleanup Selenium driver"""
         if self.driver:
             try:
                 self.driver.quit()
-            except:
-                pass
+                print("  🔌 Selenium driver closed")
+            except Exception as e:
+                print(f"  ⚠️  Driver cleanup warning: {str(e)[:50]}")
+            finally:
+                self.driver = None
+    
+    def __del__(self):
+        """Cleanup Selenium driver on object destruction"""
+        self.cleanup_driver()
 
 # ============================================================================
 # MAIN SCRAPER

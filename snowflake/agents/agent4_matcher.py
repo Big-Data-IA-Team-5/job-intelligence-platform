@@ -16,72 +16,138 @@ logger = logging.getLogger(__name__)
 load_dotenv('config/.env')
 
 
-# PROFILE EXTRACTION PROMPT (Optimized for Mixtral 8x7B)
-PROFILE_EXTRACTION_PROMPT = """Extract structured information from this resume. Respond ONLY with JSON.
+# PROFILE EXTRACTION PROMPT (Optimized for Mistral-Large2 FLAGSHIP LLM)
+PROFILE_EXTRACTION_PROMPT = """You are an expert resume parser powered by Snowflake Cortex Mistral-Large2.
+Parse this resume with industry-level precision and extract comprehensive structured data.
 
-RESUME TEXT:
+**RESUME TEXT:**
 {resume_text}
 
-Extract:
-1. Technical skills (programming languages, tools, frameworks)
-2. Soft skills (leadership, communication, etc.)
-3. Total years of experience (calculate from work history)
-4. Highest education level (High School, Bachelor's, Master's, PhD)
-5. Work authorization status (F-1, OPT, H-1B, US Citizen, or infer from context)
-6. Desired job roles (from objective/summary)
-7. Preferred locations (if mentioned)
-8. Minimum expected salary (if mentioned)
+**EXTRACTION REQUIREMENTS:**
 
-JSON format:
+1. **Technical Skills** - Be comprehensive, categorize by type:
+   - Programming Languages: Python, Java, JavaScript, etc.
+   - Frameworks: React, Spring Boot, Django, etc.
+   - Databases: SQL, PostgreSQL, MongoDB, etc.
+   - Cloud: AWS, Azure, GCP, Snowflake, etc.
+   - Tools: Git, Docker, Kubernetes, Airflow, etc.
+   - Data Science: Pandas, NumPy, TensorFlow, PyTorch, etc.
+
+2. **Soft Skills** - Extract from accomplishments and descriptions:
+   - Leadership, Communication, Problem-solving, Teamwork, etc.
+
+3. **Experience** - Calculate total years from ALL work experience:
+   - Sum all work durations (internships count)
+   - Include overlapping periods only once
+   - Format as decimal (e.g., 2.5 years)
+
+4. **Education** - Highest degree achieved:
+   - Options: "High School", "Bachelor's", "Master's", "PhD"
+   - Include major/concentration if available
+
+5. **Work Authorization** - Infer from visa mentions or location:
+   - "F-1" = Student visa
+   - "OPT" or "F-1 OPT" = Optional Practical Training
+   - "H-1B" = Work visa
+   - "US Citizen" or "Permanent Resident" = No restrictions
+   - "Unknown" = Cannot determine
+
+6. **Desired Roles** - From objective, summary, or job history:
+   - Normalize titles: "Software Engineer", "Data Scientist", "Product Manager"
+
+7. **Locations** - From preferences or current location:
+   - Cities or states mentioned
+   - "Remote" if explicitly stated
+
+8. **Salary Expectations** - Extract if mentioned (annual amount)
+
+**RESPONSE FORMAT** - Return ONLY valid JSON:
 {{
-  "technical_skills": ["Python", "SQL", "AWS"],
-  "soft_skills": ["Leadership", "Communication"],
+  "technical_skills": ["Python", "SQL", "AWS", "React", "Docker"],
+  "soft_skills": ["Leadership", "Communication", "Problem-solving"],
   "total_experience_years": 3.5,
-  "education_level": "Master's",
+  "education_level": "Master's in Computer Science",
   "work_authorization": "F-1 OPT",
-  "desired_roles": ["Data Engineer", "ML Engineer"],
-  "preferred_locations": ["Boston", "Remote"],
-  "salary_min": 80000
+  "desired_roles": ["Software Engineer", "Full Stack Developer"],
+  "preferred_locations": ["Boston", "New York", "Remote"],
+  "salary_min": 85000
 }}
-"""
+
+Be thorough and extract ALL relevant information. Quality matters."""
 
 
-# RE-RANKING PROMPT (Uses Claude 3.5 for better reasoning)
-RERANK_PROMPT = """You are a career advisor. Match this candidate to these jobs.
+# RE-RANKING PROMPT (Uses Mistral-Large2 FLAGSHIP for sophisticated matching)
+RERANK_PROMPT = """You are an expert career advisor and job matching AI powered by Snowflake Cortex Mistral-Large2.
+Your task is to perform industry-level job-candidate matching with sophisticated scoring algorithms.
 
-CANDIDATE PROFILE:
-Skills: {skills}
-Experience: {experience_years} years
-Education: {education}
-Work Auth: {work_auth}
-Preferences: {preferences}
+**CANDIDATE PROFILE:**
+- Technical Skills: {skills}
+- Total Experience: {experience_years} years
+- Education: {education}
+- Work Authorization: {work_auth}
+- Career Preferences: {preferences}
 
-TOP 20 CANDIDATE JOBS:
+**CANDIDATE JOBS (Top 20 from vector search):**
 {jobs_json}
 
-Re-rank these 20 jobs and return the TOP 10 best matches.
+**YOUR TASK:**
+Re-rank these 20 jobs and select the TOP 10 BEST MATCHES using advanced scoring criteria.
 
-SCORING CRITERIA (0-100 for each):
-1. Skills Match (30%): Required skills vs candidate skills
-2. Experience Fit (25%): Experience level alignment
-3. Visa Compatibility (20%): Work authorization match
-4. Location Preference (15%): Location alignment
-5. Growth Potential (10%): Career advancement opportunity
+**SCORING FRAMEWORK (Industry Standard):**
 
-Respond ONLY with JSON array of top 10 jobs:
+1. **Skills Match Score (35% weight)** [0-100]:
+   - Exact skill matches: +10 points each (up to 80)
+   - Similar/transferable skills: +5 points each
+   - Missing critical skills: -5 points each
+   - Bonus for rare/specialized skill matches: +20
+
+2. **Experience Fit Score (30% weight)** [0-100]:
+   - Perfect match (±1 year): 100 points
+   - Within range (±2 years): 80 points
+   - Slightly over-qualified (+2-4 years): 70 points
+   - Slightly under-qualified (-1-2 years): 60 points
+   - Significantly misaligned: 30 points
+
+3. **Visa Compatibility Score (20% weight)** [0-100]:
+   - H-1B sponsor + needs H-1B: 100 points
+   - US Citizen + any job: 100 points
+   - OPT eligible + OPT accepted: 100 points
+   - No visa support but needs it: 0 points
+
+4. **Location Match Score (10% weight)** [0-100]:
+   - Exact location match: 100 points
+   - Remote job + any preference: 100 points
+   - Same state: 70 points
+   - Different region: 40 points
+
+5. **Career Growth Score (5% weight)** [0-100]:
+   - Clear advancement path: 90+ points
+   - Skill expansion opportunity: 80 points
+   - Lateral move: 60 points
+   - Potential step back: 40 points
+
+**RESPONSE FORMAT** - Return ONLY a valid JSON array with exactly 10 jobs:
 [
   {{
-    "job_id": "...",
-    "overall_score": 85,
-    "skills_score": 90,
-    "experience_score": 80,
+    "job_id": "abc123",
+    "overall_score": 87,
+    "skills_score": 92,
+    "experience_score": 85,
     "visa_score": 100,
     "location_score": 75,
-    "growth_score": 70,
-    "reasoning": "Strong Python/SQL match, visa compatible, good growth path"
-  }}
+    "growth_score": 80,
+    "reasoning": "Excellent Python/AWS match (8/10 skills), H-1B sponsor with 95% approval rate, remote-friendly, clear path to senior role within 2 years"
+  }},
+  ...
 ]
-"""
+
+**CRITICAL RULES:**
+- Return EXACTLY 10 jobs (best matches)
+- All scores must be 0-100
+- Provide specific, actionable reasoning (2-3 sentences)
+- Consider visa needs as high priority for international candidates
+- Prioritize recent postings (within 30 days) when scores are close
+- Factor in company reputation and H-1B approval rates"""
 
 
 class ResumeMatcherAgent:
@@ -134,7 +200,7 @@ class ResumeMatcherAgent:
             # Call Mixtral
             sql = f"""
                 SELECT SNOWFLAKE.CORTEX.COMPLETE(
-                    'mixtral-8x7b',
+                    'mistral-large2',
                     '{prompt_escaped}'
                 )
             """

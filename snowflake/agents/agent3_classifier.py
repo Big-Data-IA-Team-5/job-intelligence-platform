@@ -154,7 +154,7 @@ class VisaClassifier:
             # Call Mixtral 8x7B
             sql = f"""
                 SELECT SNOWFLAKE.CORTEX.COMPLETE(
-                    'mixtral-8x7b',
+                    'mistral-large2',
                     '{prompt_escaped}'
                 )
             """
@@ -383,7 +383,7 @@ class VisaClassifier:
                     job_id, url, title, 
                     company_clean as company, 
                     location, description,
-                    h1b_sponsored, is_new_grad, work_model
+                    h1b_sponsored_explicit, is_new_grad_role, work_model
                 FROM jobs_processed
                 WHERE visa_category IS NULL OR visa_category = ''
             """

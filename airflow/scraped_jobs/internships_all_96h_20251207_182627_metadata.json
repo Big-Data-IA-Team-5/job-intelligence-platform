@@ -1,0 +1,31 @@
+{
+  "scraped_at": "2025-12-07T18:26:27.805751",
+  "cutoff_date": "2025-12-03T17:10:54.382497",
+  "time_range_hours": 96,
+  "total_jobs": 5132,
+  "total_categories": 20,
+  "successful_categories": 20,
+  "failed_categories": 0,
+  "category_breakdown": {
+    "Data_Analysis": 148,
+    "Machine_Learning_AI": 212,
+    "Product_Management": 64,
+    "Software_Engineering": 296,
+    "Business_Analyst": 28,
+    "Accounting_Finance": 349,
+    "Cybersecurity": 46,
+    "Consulting": 37,
+    "Marketing": 336,
+    "Creatives_Design": 136,
+    "Public_Sector_Government": 88,
+    "Management_Executive": 342,
+    "Legal_Compliance": 81,
+    "Arts_Entertainment": 81,
+    "Human_Resources": 189,
+    "Customer_Service_Support": 222,
+    "Sales": 413,
+    "Education_Training": 218,
+    "Engineering_Development": 1564,
+    "Healthcare": 282
+  }
+}

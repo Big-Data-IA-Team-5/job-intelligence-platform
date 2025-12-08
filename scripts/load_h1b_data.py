@@ -1,120 +1,176 @@
 """
-Load H1B Data Script
-Downloads and loads H1B visa data into Snowflake
+Load H-1B FY2025 Q3 Data - ALL 97 fields
+Loads complete H-1B disclosure data from CSV into Snowflake
 """
 import pandas as pd
 import snowflake.connector
 from snowflake.connector.pandas_tools import write_pandas
-import os
-import yaml
-import requests
-from io import StringIO
+from datetime import datetime
+import json
+import sys
 
 
-def get_snowflake_connection(config_path='config/snowflake_config.yml'):
-    """Create Snowflake connection"""
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+def load_secrets():
+    """Load secrets from secrets.json"""
+    with open('secrets.json', 'r') as f:
+        return json.load(f)
+
+
+def get_snowflake_connection():
+    """Get Snowflake connection from secrets.json"""
+    secrets = load_secrets()
+    sf_config = secrets['snowflake']
     
     return snowflake.connector.connect(
-        account=config['account'],
-        user=config['user'],
-        password=config['password'],
-        warehouse=config['warehouse'],
-        database=config['database'],
-        role=config.get('role', 'ACCOUNTADMIN')
+        user=sf_config['user'],
+        password=sf_config['password'],
+        account=sf_config['account'],
+        warehouse=sf_config['warehouse'],
+        database=sf_config['database'],
+        schema=sf_config['schema'],
+        role=sf_config['role']
     )
 
 
-def download_h1b_data(year=2023):
-    """
-    Download H1B data from USCIS or use sample data
-    Note: Actual URL would need to be updated with real source
-    """
-    print(f"📥 Downloading H1B data for {year}...")
+def load_h1b_full_data(csv_path: str):
+    """Load complete H-1B data with all 97 fields."""
     
-    # This is a placeholder - replace with actual data source
-    # Real data: https://www.uscis.gov/tools/reports-and-studies/h-1b-employer-data-hub
+    print("=" * 80)
+    print(f"📂 Loading H-1B CSV: {csv_path}")
+    print("=" * 80)
     
-    # For now, create sample data
-    sample_data = {
-        'case_number': [f'I-200-{i:05d}' for i in range(1000)],
-        'case_status': ['Certified'] * 1000,
-        'employer_name': ['Google', 'Microsoft', 'Amazon', 'Meta', 'Apple'] * 200,
-        'job_title': ['Software Engineer', 'Data Scientist', 'ML Engineer'] * 333 + ['Product Manager'],
-        'soc_code': ['15-1252'] * 1000,
-        'soc_title': ['Software Developers'] * 1000,
-        'worksite_city': ['San Francisco', 'Seattle', 'New York'] * 333 + ['Austin'],
-        'worksite_state': ['CA', 'WA', 'NY'] * 333 + ['TX'],
-        'prevailing_wage': [120000, 130000, 140000, 150000, 160000] * 200,
-        'wage_unit': ['Year'] * 1000,
-        'fiscal_year': [year] * 1000,
-        'received_date': [f'{year}-01-15'] * 1000,
-        'decision_date': [f'{year}-03-15'] * 1000
-    }
+    # Read CSV with all 97 columns
+    print("\n📊 Reading CSV file...")
+    df = pd.read_csv(csv_path, low_memory=False)
     
-    df = pd.DataFrame(sample_data)
-    print(f"✅ Loaded {len(df)} H1B records")
+    print(f"✅ Loaded {len(df):,} records with {len(df.columns)} columns")
+    print(f"\nColumns: {', '.join(df.columns[:10])}... and {len(df.columns) - 10} more")
     
-    return df
-
-
-def load_to_snowflake(df, conn):
-    """Load DataFrame to Snowflake"""
-    print("📤 Loading data to Snowflake...")
+    # Clean column names (lowercase, underscore)
+    df.columns = df.columns.str.lower().str.replace(' ', '_').str.replace('-', '_')
+    
+    # Convert date columns - FIX for Snowflake
+    print("\n🔄 Converting date columns...")
+    date_columns = ['received_date', 'decision_date', 'original_cert_date', 
+                   'begin_date', 'end_date']
+    for col in date_columns:
+        if col in df.columns:
+            # Convert to datetime then to string format Snowflake likes
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+            df[col] = df[col].dt.strftime('%Y-%m-%d')
+            # Replace NaT with None
+            df[col] = df[col].replace('NaT', None)
+    
+    # Convert numeric columns
+    print("🔄 Converting numeric columns...")
+    numeric_columns = ['wage_rate_of_pay_from', 'wage_rate_of_pay_to', 
+                      'prevailing_wage', 'total_worker_positions', 
+                      'worksite_workers', 'total_worksite_locations']
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    # Add loaded_at timestamp
+    df['loaded_at'] = datetime.now()
+    
+    # Connect to Snowflake
+    print("\n🔌 Connecting to Snowflake...")
+    conn = get_snowflake_connection()
+    
+    cursor = conn.cursor()
     
     try:
-        cursor = conn.cursor()
+        cursor.execute("USE DATABASE job_intelligence")
+        cursor.execute("USE SCHEMA raw")
         
-        # Use RAW schema
-        cursor.execute("USE SCHEMA RAW")
+        # Clear old data
+        print("🗑️ Truncating existing H-1B data...")
+        cursor.execute("TRUNCATE TABLE h1b_raw")
         
-        # Write data
+        # Load data using write_pandas (handles all columns automatically!)
+        print(f"\n📥 Uploading {len(df):,} records with ALL {len(df.columns)} columns to Snowflake...")
+        print("⏱️  This may take 5-15 minutes for 100K+ records...")
+        
         success, nchunks, nrows, _ = write_pandas(
             conn=conn,
             df=df,
-            table_name='H1B_DATA',
+            table_name='H1B_RAW',
             database='JOB_INTELLIGENCE',
             schema='RAW',
-            auto_create_table=False,
-            overwrite=False
+            chunk_size=5000,
+            auto_create_table=False,  # Table already exists with all 98 columns
+            quote_identifiers=False  # Don't quote table names
         )
         
         if success:
-            print(f"✅ Successfully loaded {nrows} rows to Snowflake")
-            return nrows
+            print(f"\n✅ Successfully loaded {nrows:,} records in {nchunks} chunks!")
         else:
-            print("❌ Failed to load data")
-            return 0
-            
-    except Exception as e:
-        print(f"❌ Error loading data: {str(e)}")
-        raise
+            print("\n❌ Load failed")
+            return
+        
+        # Verify
+        print("\n🔍 Verifying data...")
+        cursor.execute("SELECT COUNT(*) FROM raw.h1b_raw")
+        count = cursor.fetchone()[0]
+        print(f"✓ Database contains {count:,} records")
+        
+        # Show sample with contact info
+        print("\n📧 Sample records with contact information:")
+        cursor.execute("""
+            SELECT 
+                employer_name,
+                job_title,
+                employer_poc_email,
+                agent_attorney_email_address,
+                lawfirm_name_business_name,
+                wage_rate_of_pay_from,
+                case_status
+            FROM raw.h1b_raw
+            WHERE employer_poc_email IS NOT NULL
+               OR agent_attorney_email_address IS NOT NULL
+            LIMIT 5
+        """)
+        
+        for row in cursor.fetchall():
+            print(f"\n  Company: {row[0]}")
+            print(f"  Title: {row[1]}")
+            if row[2]:
+                print(f"  POC Email: {row[2]}")
+            if row[3]:
+                print(f"  Attorney Email: {row[3]}")
+            if row[4]:
+                print(f"  Law Firm: {row[4]}")
+            print(f"  Wage: ${row[5]:,.0f} | Status: {row[6]}")
+        
+        # Statistics
+        print("\n📊 Status Distribution:")
+        cursor.execute("""
+            SELECT 
+                case_status,
+                COUNT(*) as count,
+                COUNT(employer_poc_email) as has_poc_email,
+                COUNT(agent_attorney_email_address) as has_attorney_email
+            FROM raw.h1b_raw
+            GROUP BY case_status
+            ORDER BY count DESC
+        """)
+        
+        for row in cursor.fetchall():
+            print(f"   {row[0]}: {row[1]:,} ({row[2]:,} POC emails, {row[3]:,} attorney emails)")
+        
     finally:
         cursor.close()
-
-
-def main():
-    """Main execution"""
-    print("🚀 Starting H1B data load process...")
-    
-    # Download data
-    df = download_h1b_data(2023)
-    
-    # Connect to Snowflake
-    print("🔌 Connecting to Snowflake...")
-    conn = get_snowflake_connection()
-    
-    try:
-        # Load data
-        rows_loaded = load_to_snowflake(df, conn)
-        
-        print(f"\n✅ Process complete! Loaded {rows_loaded} H1B records")
-        
-    finally:
         conn.close()
-        print("🔌 Connection closed")
+    
+    print("\n" + "=" * 80)
+    print("✅ H-1B FULL DATA LOADING COMPLETE!")
+    print("=" * 80)
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) < 2:
+        print("Usage: python scripts/load_h1b_data.py data/LCA_Disclosure_Data_FY2025_Q3.csv")
+        sys.exit(1)
+    
+    csv_path = sys.argv[1]
+    load_h1b_full_data(csv_path)

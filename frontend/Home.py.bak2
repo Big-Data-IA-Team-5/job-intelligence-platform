@@ -1,0 +1,589 @@
+"""
+Unified AI Assistant - Your complete job intelligence companion
+Handles: Job Search, Resume Analysis, Salary Info, H-1B Sponsorship, Career Guidance
+"""
+import streamlit as st
+from utils.api_client import APIClient
+import time
+import io
+import base64
+
+# Page config - session clears when browser closes
+st.set_page_config(
+    page_title="Job Intelligence AI",
+    page_icon="🤖",
+    layout="centered",
+    initial_sidebar_state="expanded"
+)
+
+# Initialize API client (session-based - clears when browser closes)
+if 'api_client' not in st.session_state:
+    st.session_state.api_client = APIClient()
+
+# Initialize chat history (session-based - auto clears)
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+
+# Initialize uploaded resume (session-based - auto clears)
+if 'uploaded_resume' not in st.session_state:
+    st.session_state.uploaded_resume = None
+    st.session_state.resume_text = None
+
+# Header - Only show title if there are messages
+if st.session_state.messages:
+    col1, col2, col3 = st.columns([5, 1, 1])
+    with col1:
+        st.markdown("### 🤖 AI Job Intelligence")
+    with col2:
+        # Resume upload button
+        if st.button("➕ Resume" if not st.session_state.resume_text else "📄 Resume", use_container_width=True):
+            st.session_state.show_upload = not st.session_state.get('show_upload', False)
+            st.rerun()
+    with col3:
+        if st.button("🔄 New", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.uploaded_resume = None
+            st.session_state.resume_text = None
+            st.session_state.show_upload = False
+            st.rerun()
+
+# Sidebar - compact and focused
+with st.sidebar:
+    st.markdown("### � Your Profile")
+    
+    # Show current resume status
+    if st.session_state.resume_text:
+        st.markdown(f"""
+        <div style='padding: 1rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 10px; color: white; text-align: center;'>
+            <h3 style='margin: 0; font-size: 1.2rem;'>✅ Resume Active</h3>
+            <p style='margin: 0.5rem 0 0 0; opacity: 0.9; font-size: 0.85rem;'>{st.session_state.uploaded_resume.name if st.session_state.uploaded_resume else 'Uploaded'}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("")
+        if st.button("🗑️ Remove", use_container_width=True, type="secondary"):
+            st.session_state.uploaded_resume = None
+            st.session_state.resume_text = None
+            st.rerun()
+    else:
+        st.markdown("""
+        <div style='padding: 1rem; background: rgba(255,255,255,0.05); border: 2px dashed rgba(255,255,255,0.3); border-radius: 10px; text-align: center;'>
+            <p style='margin: 0; opacity: 0.7;'>📎 No resume yet</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("")
+    uploaded_file = st.file_uploader(
+        "📄 Upload Resume",
+        type=['pdf', 'docx', 'txt'],
+        label_visibility="visible",
+        key="sidebar_resume_upload",
+        help="Upload your resume for personalized job matching"
+    )
+    
+    if uploaded_file is not None:
+        if uploaded_file != st.session_state.uploaded_resume:
+            st.session_state.uploaded_resume = uploaded_file
+            
+            # Extract text from resume
+            with st.spinner("📖 Reading your resume..."):
+                try:
+                    if uploaded_file.type == "application/pdf":
+                        import PyPDF2
+                        pdf_reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.read()))
+                        resume_text = ""
+                        for page in pdf_reader.pages:
+                            resume_text += page.extract_text()
+                        st.session_state.resume_text = resume_text
+                    elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                        import docx
+                        doc = docx.Document(io.BytesIO(uploaded_file.read()))
+                        resume_text = "\n".join([para.text for para in doc.paragraphs])
+                        st.session_state.resume_text = resume_text
+                    else:
+                        resume_text = uploaded_file.read().decode('utf-8')
+                        st.session_state.resume_text = resume_text
+                    
+                    # Add confirmation message to chat
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": f"✅ **Resume uploaded from sidebar: {uploaded_file.name}**\n\nI can now help you with personalized job search, resume review, and career advice!"
+                    })
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error reading resume: {str(e)}")
+    
+    st.divider()
+    
+    # Only show after conversation starts
+    if st.session_state.messages:
+        st.markdown("### 📊 Session")
+        col1, col2 = st.columns(2)
+        col1.metric("💬", len(st.session_state.messages))
+        col2.metric("❓", len([m for m in st.session_state.messages if m["role"] == "user"]))
+        st.divider()
+    
+    st.markdown("### ✨ I can help with")
+    st.markdown("""
+    🔍 Job search  
+    💰 Salaries  
+    📄 Resume feedback  
+    🌐 H-1B info  
+    🎯 Career advice  
+    """)
+    
+    if st.session_state.messages:
+        st.divider()
+        st.caption("💡 Session clears on browser close")
+
+# Display chat messages
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        
+        # Show metadata for assistant messages
+        if message["role"] == "assistant" and "metadata" in message:
+            with st.expander("� Details", expanded=False):
+                cols = st.columns(3)
+                cols[0].metric("Confidence", f"{message['metadata'].get('confidence', 0):.0%}")
+                cols[1].metric("Data Points", message['metadata'].get('data_points', 0))
+                cols[2].metric("Sources", len(message['metadata'].get('sources', [])))
+
+# CSS to make chat input sticky at bottom
+st.markdown("""
+<style>
+    /* Hide file uploader size limits */
+    [data-testid="stFileUploader"] small {
+        display: none !important;
+    }
+    
+    /* Make chat input sticky at bottom */
+    [data-testid="stChatInput"] {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: var(--background-color);
+        padding: 1rem;
+        z-index: 1000;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    /* Add padding to bottom of chat to prevent overlap */
+    .main .block-container {
+        padding-bottom: 120px !important;
+    }
+    
+    /* Clean input styling */
+    [data-testid="stChatInput"] textarea {
+        border-radius: 20px !important;
+        border: 2px solid rgba(255, 255, 255, 0.1) !important;
+    }
+    
+    [data-testid="stChatInput"] textarea:focus {
+        border-color: rgba(103, 126, 234, 0.5) !important;
+        box-shadow: 0 0 0 3px rgba(103, 126, 234, 0.1) !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Show inline resume uploader if "+" button clicked (above chat input)
+if st.session_state.get('show_upload', False) and st.session_state.messages:
+    with st.container():
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            upload_file = st.file_uploader("📎 Upload Resume", type=['pdf', 'docx', 'txt'], key="inline_upload")
+            if upload_file and upload_file != st.session_state.uploaded_resume:
+                try:
+                    if upload_file.type == "application/pdf":
+                        import PyPDF2
+                        pdf_reader = PyPDF2.PdfReader(io.BytesIO(upload_file.read()))
+                        resume_text = "".join([page.extract_text() for page in pdf_reader.pages])
+                        st.session_state.resume_text = resume_text
+                    elif upload_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                        import docx
+                        doc = docx.Document(io.BytesIO(upload_file.read()))
+                        resume_text = "\n".join([para.text for para in doc.paragraphs])
+                        st.session_state.resume_text = resume_text
+                    else:
+                        st.session_state.resume_text = upload_file.read().decode('utf-8')
+                    
+                    st.session_state.uploaded_resume = upload_file
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": f"✅ Resume uploaded! Ask me anything about jobs, career advice, or resume feedback."
+                    })
+                    st.session_state.show_upload = False
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+        with col2:
+            if st.button("✕ Cancel"):
+                st.session_state.show_upload = False
+                st.rerun()
+
+# Chat input - always at bottom
+placeholder_text = "Message AI Job Intelligence..."
+if st.session_state.resume_text:
+    placeholder_text = "📄 " + placeholder_text
+
+prompt = st.chat_input(placeholder_text)
+
+if prompt:
+    # Add user message to chat
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # Display assistant response
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        
+        # Build conversation context for the API
+        # Include last 3 exchanges for context (6 messages)
+        context_messages = st.session_state.messages[-7:] if len(st.session_state.messages) > 7 else st.session_state.messages
+        
+        # Create context string with focus on entities mentioned
+        context = ""
+        entities = {"location": None, "company": None, "role": None}
+        
+        if len(context_messages) > 1:
+            # Extract entities from previous messages (both user AND assistant)
+            for msg in context_messages[:-1]:
+                msg_lower = msg['content'].lower()
+                
+                # Extract location
+                if "boston" in msg_lower:
+                    entities["location"] = "Boston"
+                elif "seattle" in msg_lower:
+                    entities["location"] = "Seattle"
+                elif "new york" in msg_lower or "nyc" in msg_lower:
+                    entities["location"] = "New York"
+                elif "california" in msg_lower or " ca" in msg_lower:
+                    entities["location"] = "California"
+                
+                # Extract company
+                companies = ["amazon", "google", "microsoft", "meta", "apple"]
+                for comp in companies:
+                    if comp in msg_lower:
+                        entities["company"] = comp.title()
+                
+                # Extract role (check both user questions AND assistant job listings)
+                if "software engineer" in msg_lower or "sde" in msg_lower:
+                    entities["role"] = "Software Engineer"
+                elif "data engineer" in msg_lower:
+                    entities["role"] = "Data Engineer"
+                elif "data scientist" in msg_lower:
+                    entities["role"] = "Data Scientist"
+                elif "intern" in msg_lower:
+                    # Check what type of intern
+                    if "software" in msg_lower or "engineering" in msg_lower:
+                        entities["role"] = "Software Engineering Intern"
+                    elif "data" in msg_lower:
+                        entities["role"] = "Data Intern"
+                    else:
+                        entities["role"] = "Intern"
+        
+        # Detect query type and enhance accordingly
+        query_lower = prompt.lower()
+        query_type = "chat"  # default
+        full_query = prompt
+        
+        # ALWAYS append resume context if available (for ALL queries)
+        resume_context = ""
+        if st.session_state.resume_text:
+            resume_context = f"\n\nMy Resume:\n{st.session_state.resume_text[:2000]}"
+        
+        # Check if it's a resume-related query
+        resume_keywords = ["resume", "cv", "review my", "feedback", "improve", "skills", "experience", "suggest", "advice", "what should i"]
+        if any(keyword in query_lower for keyword in resume_keywords):
+            query_type = "resume"
+            if st.session_state.resume_text:
+                full_query = f"{prompt}{resume_context}"
+            else:
+                full_query = prompt + " (Note: No resume uploaded yet. Upload via 📎 button for personalized help.)"
+        
+        # Check if it's a salary query - enhance with context
+        elif any(word in query_lower for word in ["salary", "pay", "earn", "compensation", "how much"]):
+            query_type = "salary"
+            # Always add context for salary questions
+            context_parts = []
+            if entities["role"]:
+                # Check if role is already in the question
+                if entities["role"].lower() not in query_lower:
+                    full_query = f"{prompt} for {entities['role']}"
+            if entities["location"] and entities["location"].lower() not in query_lower:
+                full_query += f" in {entities['location']}"
+        
+        # Check if user wants more results from previous search
+        elif any(word in query_lower for word in ["more", "additional", "other", "others", "else"]):
+            query_type = "more_results"
+            # Reconstruct the search query from context
+            if entities["role"]:
+                full_query = f"show me more {entities['role']} jobs"
+                if entities["location"]:
+                    full_query += f" in {entities['location']}"
+            else:
+                full_query = prompt  # Fallback if no context
+        
+        # Check if it's a job search query
+        elif any(word in query_lower for word in ["find", "show", "search", "list", "jobs", "positions", "openings"]):
+            query_type = "job_search"
+            # Enhance with context
+            if entities["role"] and entities["role"].lower() not in query_lower:
+                full_query = f"{prompt} for {entities['role']}"
+            if entities["location"] and entities["location"].lower() not in query_lower:
+                full_query += f" in {entities['location']}"
+            # Add resume context for job matching
+            if resume_context:
+                full_query += resume_context
+        
+        # Check if it's H-1B/sponsorship query
+        elif any(word in query_lower for word in ["sponsor", "h-1b", "h1b", "visa", "contact", "who should"]):
+            query_type = "h1b"
+            if entities["company"] and entities["company"].lower() not in query_lower:
+                full_query = f"{prompt} at {entities['company']}"
+            elif entities["role"] and entities["role"].lower() not in query_lower:
+                full_query = f"{prompt} for {entities['role']}"
+        
+        # If question is vague but we have context, enhance it
+        elif any(prompt.lower().startswith(v) for v in ["what", "tell me", "how about", "show me"]):
+            query_type = "contextual"
+            context_parts = []
+            if entities["role"]:
+                context_parts.append(f"for {entities['role']}")
+            if entities["location"]:
+                context_parts.append(f"in {entities['location']}")
+            if entities["company"]:
+                context_parts.append(f"at {entities['company']}")
+            
+            if context_parts:
+                full_query = f"{prompt} {' '.join(context_parts)}"
+        
+        try:
+            # Show what we're asking (for debugging)
+            with st.expander("🔍 Query Analysis", expanded=False):
+                st.write("**Query Type:**", query_type)
+                st.write("**Original Question:**", prompt)
+                st.write("**Enhanced Query:**", full_query[:500] + "..." if len(full_query) > 500 else full_query)
+                if any(entities.values()):
+                    st.write("**Context:**", {k: v for k, v in entities.items() if v})
+                if st.session_state.resume_text:
+                    st.write("**Resume:**", f"✅ Loaded ({len(st.session_state.resume_text)} chars)")
+            
+            # Show typing indicator
+            with st.spinner("🤔 Thinking..."):
+                from urllib.parse import quote
+                
+                # For job search queries, also fetch jobs
+                jobs_data = None
+                if query_type == "job_search":
+                    # Extract search parameters
+                    search_params = {}
+                    if entities["role"]:
+                        search_params["query"] = entities["role"]
+                    if entities["location"]:
+                        search_params["location"] = entities["location"]
+                    
+                    # Try to search for jobs
+                    try:
+                        jobs_response = st.session_state.api_client.get("/api/search", params=search_params)
+                        if jobs_response and "jobs" in jobs_response:
+                            jobs_data = jobs_response["jobs"][:10]  # Top 10 jobs
+                    except:
+                        pass
+                
+                # Call the chat API for answer
+                response = st.session_state.api_client.post(
+                    f"/api/chat/ask?question={quote(full_query)}"
+                )
+            
+            if response and "answer" in response:
+                answer = response["answer"]
+                
+                # Display the answer
+                message_placeholder.markdown(answer)
+                
+                # If we have jobs, display them
+                if jobs_data and len(jobs_data) > 0:
+                    st.markdown("---")
+                    st.markdown(f"### 🎯 Found {len(jobs_data)} Matching Jobs")
+                    
+                    for idx, job in enumerate(jobs_data, 1):
+                        with st.expander(f"**{idx}. {job.get('title', 'N/A')}** at {job.get('company', 'N/A')}", expanded=(idx <= 3)):
+                            cols = st.columns([3, 1])
+                            with cols[0]:
+                                st.write(f"📍 **Location:** {job.get('location', 'Not specified')}")
+                                if job.get('description'):
+                                    st.write(f"📝 {job['description'][:200]}...")
+                                if job.get('h1b_sponsor'):
+                                    st.write("🎫 **H-1B Sponsor:** ✅ Yes")
+                            with cols[1]:
+                                if job.get('url'):
+                                    st.link_button("Apply →", job['url'], use_container_width=True)
+                                if job.get('similarity_score'):
+                                    st.metric("Match", f"{job['similarity_score']:.0%}")
+                
+                # Store assistant message with metadata
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": answer,
+                    "metadata": {
+                        "confidence": response.get("confidence", 0),
+                        "data_points": response.get("data_points", 0),
+                        "sources": response.get("sources", [])
+                    }
+                })
+                
+                # Show quick follow-up suggestions
+                if response.get("confidence", 0) > 0.5:
+                    st.markdown("---")
+                    st.markdown("**💡 Quick follow-ups:**")
+                    
+                    # Generate smart follow-up suggestions based on the actual response
+                    suggestions = []
+                    
+                    # If we showed jobs, suggest salary and H-1B info
+                    if "Found" in answer and "jobs" in answer.lower():
+                        if entities["role"]:
+                            suggestions = [
+                                f"What's the salary for {entities['role']}?",
+                                f"Which companies sponsor H-1B for {entities['role']}?",
+                                "Tell me about the top company"
+                            ]
+                        else:
+                            suggestions = [
+                                "What's the average salary?",
+                                "Which companies sponsor H-1B?",
+                                "Show me more details"
+                            ]
+                    
+                    # If we showed salary, suggest jobs and H-1B
+                    elif "salary" in answer.lower() or "average" in answer.lower():
+                        if entities["role"]:
+                            suggestions = [
+                                f"Find me {entities['role']} jobs",
+                                f"Which companies sponsor H-1B for {entities['role']}?",
+                                "What about in other cities?"
+                            ]
+                        else:
+                            suggestions = [
+                                "Show me related jobs",
+                                "Which companies sponsor H-1B?",
+                                "Compare with other roles"
+                            ]
+                    
+                    # If we showed H-1B info, suggest jobs and contacts
+                    elif "sponsor" in answer.lower() or "h-1b" in answer.lower() or "h1b" in answer.lower():
+                        suggestions = [
+                            "Show me jobs at these companies",
+                            "What are the salaries?",
+                            "Who should I contact?"
+                        ]
+                    
+                    # Default suggestions
+                    else:
+                        suggestions = [
+                            "Show me related jobs",
+                            "What's the salary?",
+                            "Which companies sponsor H-1B?"
+                        ]
+                    
+                    cols = st.columns(len(suggestions))
+                    for i, suggestion in enumerate(suggestions):
+                        if cols[i].button(suggestion, key=f"suggestion_{i}_{len(st.session_state.messages)}"):
+                            # Add the suggestion as a new user message
+                            st.session_state.messages.append({"role": "user", "content": suggestion})
+                            st.rerun()
+            
+            else:
+                error_msg = "Sorry, I couldn't process your request. Please try rephrasing your question."
+                message_placeholder.error(error_msg)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
+        
+        except Exception as e:
+            error_msg = f"❌ Error: {str(e)}"
+            message_placeholder.error(error_msg)
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": error_msg
+            })
+
+# Welcome screen - Only show when no messages
+if not st.session_state.messages:
+    from datetime import datetime
+    
+    # Get time-based greeting
+    hour = datetime.now().hour
+    if hour < 12:
+        greeting = "Good Morning"
+        emoji = "🌅"
+    elif hour < 17:
+        greeting = "Good Afternoon"
+        emoji = "☀️"
+    else:
+        greeting = "Good Evening"
+        emoji = "🌙"
+    
+    st.markdown(f"""
+    <div style='text-align: center; padding: 4rem 2rem;'>
+        <h1 style='font-size: 3.5rem; margin: 0;'>{emoji}</h1>
+        <h2 style='font-size: 2rem; margin: 1rem 0 0.5rem 0; font-weight: 400;'>{greeting}</h2>
+        <p style='font-size: 1.2rem; opacity: 0.6; margin: 0;'>How can I help you today?</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Suggestion chips - clean and minimal
+    st.markdown("<div style='max-width: 800px; margin: 0 auto;'>", unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔍  Find me a job", use_container_width=True, key="ex1"):
+            st.session_state.messages.append({"role": "user", "content": "I'm looking for Software Engineer jobs in Boston"})
+            st.rerun()
+        if st.button("💰  Salary insights", use_container_width=True, key="ex2"):
+            st.session_state.messages.append({"role": "user", "content": "What's the average salary for Software Engineers?"})
+            st.rerun()
+    
+    with col2:
+        if st.button("🌐  H-1B sponsorship", use_container_width=True, key="ex3"):
+            st.session_state.messages.append({"role": "user", "content": "Which companies sponsor H-1B for tech roles?"})
+            st.rerun()
+        if st.button("📄  Review my resume", use_container_width=True, key="ex4"):
+            st.session_state.show_upload = True
+            st.rerun()
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Show upload dialog if triggered
+    if st.session_state.get('show_upload', False):
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        uploaded = st.file_uploader("� Upload your resume", type=['pdf', 'docx', 'txt'], key="welcome_upload")
+        if uploaded:
+            try:
+                if uploaded.type == "application/pdf":
+                    import PyPDF2
+                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(uploaded.read()))
+                    resume_text = "".join([page.extract_text() for page in pdf_reader.pages])
+                    st.session_state.resume_text = resume_text
+                elif uploaded.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                    import docx
+                    doc = docx.Document(io.BytesIO(uploaded.read()))
+                    resume_text = "\n".join([para.text for para in doc.paragraphs])
+                    st.session_state.resume_text = resume_text
+                else:
+                    st.session_state.resume_text = uploaded.read().decode('utf-8')
+                
+                st.session_state.uploaded_resume = uploaded
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"✅ Resume uploaded! I can now give you personalized job matches and career advice. What would you like to know?"
+                })
+                st.session_state.show_upload = False
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
