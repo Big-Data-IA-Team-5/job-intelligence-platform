@@ -1,0 +1,95 @@
+{
+  "scraped_at": "2025-12-09T03:08:25.516279",
+  "cutoff_date": "2025-11-24T02:05:03.413053",
+  "time_range_hours": 360,
+  "total_jobs": 5614,
+  "total_categories": 21,
+  "successful_categories": 21,
+  "failed_categories": 0,
+  "category_breakdown": {
+    "Data_Engineer": {
+      "job_count": 72,
+      "status": "success"
+    },
+    "Cyber_Security": {
+      "job_count": 126,
+      "status": "success"
+    },
+    "Machine_Learning_AI": {
+      "job_count": 319,
+      "status": "success"
+    },
+    "Software_Engineering": {
+      "job_count": 464,
+      "status": "success"
+    },
+    "Business_Analyst": {
+      "job_count": 68,
+      "status": "success"
+    },
+    "Engineering_Development": {
+      "job_count": 388,
+      "status": "success"
+    },
+    "Data_Analyst": {
+      "job_count": 329,
+      "status": "success"
+    },
+    "Product_Management": {
+      "job_count": 279,
+      "status": "success"
+    },
+    "Project_Manager": {
+      "job_count": 126,
+      "status": "success"
+    },
+    "Marketing": {
+      "job_count": 310,
+      "status": "success"
+    },
+    "Sales": {
+      "job_count": 280,
+      "status": "success"
+    },
+    "Consulting": {
+      "job_count": 360,
+      "status": "success"
+    },
+    "Management_Executive": {
+      "job_count": 320,
+      "status": "success"
+    },
+    "Accounting_Finance": {
+      "job_count": 326,
+      "status": "success"
+    },
+    "Human_Resources": {
+      "job_count": 306,
+      "status": "success"
+    },
+    "Customer_Service_Support": {
+      "job_count": 214,
+      "status": "success"
+    },
+    "Creatives_Design": {
+      "job_count": 299,
+      "status": "success"
+    },
+    "Legal_Compliance": {
+      "job_count": 265,
+      "status": "success"
+    },
+    "Arts_Entertainment": {
+      "job_count": 214,
+      "status": "success"
+    },
+    "Education_Training": {
+      "job_count": 249,
+      "status": "success"
+    },
+    "Health_Care": {
+      "job_count": 300,
+      "status": "success"
+    }
+  }
+}

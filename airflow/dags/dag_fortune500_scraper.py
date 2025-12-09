@@ -87,9 +87,10 @@ def scrape_fortune500_jobs(**context):
     companies_to_scrape = [
         c for c in companies 
         if not progress.is_completed(c['name'])
-    ][:50]  # Scrape 50 companies per run (optimized for 8-hour timeout)
+    ][:200]  # Scrape 200 companies per run (increased from 50)
     
     print(f"\n⚙️  Configuration:")
+    print(f"   Total companies in CSV: {len(companies)}")
     print(f"   Companies to scrape: {len(companies_to_scrape)}")
     print(f"   Max workers: 8")  # 8 workers for optimal performance
     print(f"   Time window: Last 15 days")

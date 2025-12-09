@@ -18,8 +18,17 @@ def clean_nan_values(value):
         return None
     return value
 
-def format_value(value):
-    """Format value for SQL INSERT statement"""
+def truncate_text(text, max_length=16000000):
+    """Truncate text to fit Snowflake VARCHAR limits"""
+    if text is None:
+        return None
+    text_str = str(text)
+    if len(text_str) > max_length:
+        return text_str[:max_length-3] + '...'
+    return text_str
+
+def format_value(value, max_length=None):
+    """Format value for SQL INSERT statement with optional truncation"""
     value = clean_nan_values(value)
     if value is None:
         return 'NULL'
@@ -28,8 +37,12 @@ def format_value(value):
     elif isinstance(value, bool):
         return 'TRUE' if value else 'FALSE'
     else:
+        # Truncate if max_length specified
+        text = str(value)
+        if max_length and len(text) > max_length:
+            text = text[:max_length-3] + '...'
         # Escape single quotes for SQL (do NOT escape % - we're building literal SQL, not using placeholders)
-        escaped = str(value).replace("'", "''")
+        escaped = text.replace("'", "''")
         return f"'{escaped}'"
 
 def escape_json_for_sql(json_str):
@@ -165,27 +178,27 @@ def upload_to_snowflake(
                     # Use compact JSON without extra whitespace and properly escape for SQL
                     raw_json_str = escape_json_for_sql(json.dumps(record, ensure_ascii=False, separators=(',', ':')))
                     select_list.append(f"""SELECT
-                        {format_value(record.get('job_id'))} AS job_id,
-                        {format_value(record.get('url'))} AS url,
-                        {format_value(record.get('title'))} AS title,
-                        {format_value(record.get('company'))} AS company,
-                        {format_value(record.get('location'))} AS location,
-                        {format_value(record.get('description'))} AS description,
-                        {format_value(record.get('snippet'))} AS snippet,
+                        {format_value(record.get('job_id'), max_length=500)} AS job_id,
+                        {format_value(record.get('url'), max_length=1000)} AS url,
+                        {format_value(record.get('title'), max_length=500)} AS title,
+                        {format_value(record.get('company'), max_length=500)} AS company,
+                        {format_value(record.get('location'), max_length=500)} AS location,
+                        {format_value(record.get('description'), max_length=15000000)} AS description,
+                        {format_value(record.get('snippet'), max_length=5000)} AS snippet,
                         {format_value(record.get('salary_min'))} AS salary_min,
                         {format_value(record.get('salary_max'))} AS salary_max,
-                        {format_value(record.get('salary_text'))} AS salary_text,
-                        {format_value(record.get('job_type'))} AS job_type,
-                        {format_value(record.get('posted_date'))} AS posted_date,
-                        {format_value(record.get('work_model'))} AS work_model,
-                        {format_value(record.get('department'))} AS department,
-                        {format_value(record.get('company_size'))} AS company_size,
-                        {format_value(record.get('qualifications'))} AS qualifications,
+                        {format_value(record.get('salary_text'), max_length=500)} AS salary_text,
+                        {format_value(record.get('job_type'), max_length=200)} AS job_type,
+                        {format_value(record.get('posted_date'), max_length=50)} AS posted_date,
+                        {format_value(record.get('work_model'), max_length=100)} AS work_model,
+                        {format_value(record.get('department'), max_length=200)} AS department,
+                        {format_value(record.get('company_size'), max_length=100)} AS company_size,
+                        {format_value(record.get('qualifications'), max_length=15000000)} AS qualifications,
                         {format_value(record.get('h1b_sponsored'))} AS h1b_sponsored,
                         {format_value(record.get('is_new_grad'))} AS is_new_grad,
-                        {format_value(record.get('category'))} AS category,
+                        {format_value(record.get('category'), max_length=200)} AS category,
                         CURRENT_TIMESTAMP() AS scraped_at,
-                        {format_value(record.get('source', 'unknown'))} AS source,
+                        {format_value(record.get('source', 'unknown'), max_length=200)} AS source,
                         PARSE_JSON('{raw_json_str}') AS raw_json""")
                 
                 # Execute batch INSERT with SELECT UNION ALL
