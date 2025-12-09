@@ -1,4 +1,4 @@
-# Backend Requirements
+# Backend Requirements - Production Ready
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
@@ -16,7 +16,20 @@ numpy==1.26.2
 # Utilities
 python-dotenv==1.0.0
 pyyaml==6.0.1
+pytz==2023.3
 
 # File processing
 PyPDF2==3.0.1
 python-docx==1.1.2
+
+# Performance & monitoring
+ujson==5.9.0
+orjson==3.9.10
+prometheus-fastapi-instrumentator==6.1.0
+
+# Caching
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# HTTP client
+httpx==0.25.2

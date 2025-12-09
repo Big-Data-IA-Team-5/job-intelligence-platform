@@ -135,9 +135,9 @@ async def search_jobs(
                 h1b_sponsored_explicit=job.get('H1B_SPONSORED_EXPLICIT'),
                 is_new_grad_role=job.get('IS_NEW_GRAD_ROLE'),
                 job_category=job.get('JOB_CATEGORY'),
-                # H-1B data from h1b_raw table
-                total_petitions=job.get('TOTAL_PETITIONS'),
-                avg_approval_rate=job.get('AVG_APPROVAL_RATE'),
+                # H-1B data - use correct field names
+                total_petitions=job.get('H1B_TOTAL_PETITIONS'),
+                avg_approval_rate=job.get('H1B_APPROVAL_RATE'),
                 snippet=job.get('SNIPPET'),
                 posted_date=job.get('POSTED_DATE'),
                 relevance_score=job.get('RELEVANCE_SCORE')

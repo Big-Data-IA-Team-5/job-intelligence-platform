@@ -1,0 +1,414 @@
+version: '3.8'
+
+# Production-Ready Docker Compose Configuration
+# Optimized for heavy workloads with proper resource allocation
+# Includes: Backend API, Frontend, Airflow (with Scheduler, Webserver, Triggerer), PostgreSQL, Selenium Grid
+
+x-airflow-common:
+  &airflow-common
+  build:
+    context: ./airflow
+    dockerfile: Dockerfile
+  environment:
+    &airflow-common-env
+    # Core Airflow Configuration
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    
+    # PRODUCTION PERFORMANCE TUNING - Heavy Configuration
+    AIRFLOW__CORE__PARALLELISM: 64                        # Maximum parallel tasks across all DAGs
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: 32          # Max tasks per DAG instance
+    AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: 5            # Max concurrent DAG runs
+    AIRFLOW__SCHEDULER__MAX_TIS_PER_QUERY: 512           # Tasks scheduler can query at once
+    AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 30    # Seconds between DAG file scans
+    AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: 60        # Seconds between DAG directory scans
+    
+    # Database Connection Pool - Production Optimized
+    AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: 20         # Connection pool size
+    AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: 40      # Max overflow connections
+    AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_RECYCLE: 1800    # Recycle connections every 30 min
+    AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_PRE_PING: 'true' # Test connections before use
+    
+    # Task Execution - Heavy Configuration
+    AIRFLOW__CORE__DEFAULT_TASK_RETRIES: 2
+    AIRFLOW__CORE__TASK_RUNNER: StandardTaskRunner
+    AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: 300            # 5 min for DAG imports
+    
+    # Logging Configuration
+    AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+    AIRFLOW__LOGGING__FAB_LOGGING_LEVEL: WARNING
+    AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
+    AIRFLOW__LOGGING__DAG_PROCESSOR_MANAGER_LOG_LOCATION: /opt/airflow/logs/dag_processor_manager/dag_processor_manager.log
+    
+    # Webserver Configuration
+    AIRFLOW__WEBSERVER__WORKERS: 4                       # Gunicorn workers
+    AIRFLOW__WEBSERVER__WORKER_REFRESH_INTERVAL: 1800    # Refresh workers every 30 min
+    AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: 300   # Worker timeout
+    
+    # Selenium Configuration
+    SELENIUM_REMOTE_URL: 'http://selenium-chrome:4444/wd/hub'
+    
+    # AWS Credentials
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+    AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    
+    # OpenAI API Key
+    OPENAI_API_KEY: ${OPENAI_API_KEY}
+    
+    # Snowflake Credentials
+    SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+    SNOWFLAKE_USER: ${SNOWFLAKE_USER}
+    SNOWFLAKE_PASSWORD: ${SNOWFLAKE_PASSWORD}
+    SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
+    SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
+    SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA}
+    SNOWFLAKE_ROLE: ${SNOWFLAKE_ROLE}
+    
+  volumes:
+    - ${AIRFLOW_PROJ_DIR:-./airflow}/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-./airflow}/logs:/opt/airflow/logs
+    - ${AIRFLOW_PROJ_DIR:-./airflow}/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-./airflow}/plugins:/opt/airflow/plugins
+    - ./scrapers:/opt/airflow/scrapers
+    - ./data:/opt/airflow/data
+    - ./dbt:/opt/airflow/dbt
+    - ${AIRFLOW_PROJ_DIR:-./airflow}/scraped_jobs:/opt/airflow/scraped_jobs
+    - ./secrets.json:/opt/airflow/secrets/secrets.json:ro
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+    selenium-chrome:
+      condition: service_started
+
+services:
+  # =========================================================================
+  # PostgreSQL Database - PRODUCTION OPTIMIZED FOR HEAVY WORKLOAD
+  # =========================================================================
+  postgres:
+    image: postgres:14
+    container_name: job-intel-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+      # Production PostgreSQL tuning
+      POSTGRES_MAX_CONNECTIONS: 300
+      POSTGRES_SHARED_BUFFERS: 1GB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 4GB
+      POSTGRES_MAINTENANCE_WORK_MEM: 256MB
+      POSTGRES_CHECKPOINT_COMPLETION_TARGET: 0.9
+      POSTGRES_WAL_BUFFERS: 16MB
+      POSTGRES_DEFAULT_STATISTICS_TARGET: 100
+      POSTGRES_RANDOM_PAGE_COST: 1.1
+      POSTGRES_EFFECTIVE_IO_CONCURRENCY: 200
+      POSTGRES_WORK_MEM: 32MB
+      POSTGRES_MIN_WAL_SIZE: 1GB
+      POSTGRES_MAX_WAL_SIZE: 4GB
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 10s
+      timeout: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 6G
+        reservations:
+          cpus: '2.0'
+          memory: 4G
+    restart: unless-stopped
+    networks:
+      - job-intelligence-network
+    command: >
+      postgres
+      -c max_connections=300
+      -c shared_buffers=1GB
+      -c effective_cache_size=4GB
+      -c maintenance_work_mem=256MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=32MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+
+  # =========================================================================
+  # Selenium Chrome - HEAVY WORKLOAD CONFIGURATION
+  # =========================================================================
+  selenium-chrome:
+    image: seleniarm/standalone-chromium:latest
+    platform: linux/arm64
+    container_name: job-intel-selenium
+    shm_size: 8gb  # Increased for heavy scraping
+    ports:
+      - "4444:4444"
+      - "7900:7900"  # VNC for debugging
+    environment:
+      - SE_NODE_MAX_SESSIONS=30              # Increased max sessions
+      - SE_NODE_SESSION_TIMEOUT=1200         # 20 min timeout
+      - SE_SESSION_REQUEST_TIMEOUT=1200
+      - SE_NODE_OVERRIDE_MAX_SESSIONS=true
+      - SE_VNC_NO_PASSWORD=1
+      - SE_START_XVFB=false
+      - JAVA_OPTS=-Xmx4096m                  # 4GB heap for Java
+      - SE_SCREEN_WIDTH=1920
+      - SE_SCREEN_HEIGHT=1080
+    deploy:
+      resources:
+        limits:
+          cpus: '6.0'
+          memory: 10G
+        reservations:
+          cpus: '3.0'
+          memory: 6G
+    restart: unless-stopped
+    networks:
+      - job-intelligence-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4444/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # =========================================================================
+  # Airflow Webserver - PRODUCTION SCALED
+  # =========================================================================
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: job-intel-airflow-webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '3.0'
+          memory: 4G
+        reservations:
+          cpus: '1.5'
+          memory: 2G
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - job-intelligence-network
+
+  # =========================================================================
+  # Airflow Scheduler - HEAVY WORKLOAD CONFIGURATION
+  # =========================================================================
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: job-intel-airflow-scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 8G                         # Heavy memory for scheduler
+        reservations:
+          cpus: '2.0'
+          memory: 4G
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - job-intelligence-network
+
+  # =========================================================================
+  # Airflow Triggerer - For Deferrable Operators
+  # =========================================================================
+  airflow-triggerer:
+    <<: *airflow-common
+    container_name: job-intel-airflow-triggerer
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - job-intelligence-network
+
+  # =========================================================================
+  # Airflow Init - Database Initialization
+  # =========================================================================
+  airflow-init:
+    <<: *airflow-common
+    container_name: job-intel-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        function ver() {
+          printf "%04d%04d%04d%04d" $${1//./ }
+        }
+        airflow_version=$$(AIRFLOW__LOGGING__LOGGING_LEVEL=INFO && gosu airflow airflow version)
+        airflow_version_comparable=$$(ver $${airflow_version})
+        min_airflow_version=2.2.0
+        min_airflow_version_comparable=$$(ver $${min_airflow_version})
+        if (( airflow_version_comparable < min_airflow_version_comparable )); then
+          echo -e "\033[1;31mERROR: Too old Airflow version $${airflow_version}!\e[0m"
+          exit 1
+        fi
+        mkdir -p /sources/logs /sources/dags /sources/plugins /sources/scraped_jobs
+        chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins,scraped_jobs}
+        exec /entrypoint airflow version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      _PIP_ADDITIONAL_REQUIREMENTS: ''
+    user: "0:0"
+    volumes:
+      - ${AIRFLOW_PROJ_DIR:-./airflow}:/sources
+    networks:
+      - job-intelligence-network
+
+  # =========================================================================
+  # Backend API - PRODUCTION READY
+  # =========================================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: job-intel-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT}
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER}
+      - SNOWFLAKE_PASSWORD=${SNOWFLAKE_PASSWORD}
+      - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
+      - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE}
+      - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA}
+      - SNOWFLAKE_ROLE=${SNOWFLAKE_ROLE}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ENVIRONMENT=production
+    volumes:
+      - ./backend:/app
+      - ./config:/app/config
+      - ./secrets.json:/app/secrets.json:ro
+      - ./snowflake/agents:/app/snowflake/agents:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 3G
+        reservations:
+          cpus: '1.0'
+          memory: 1.5G
+    restart: unless-stopped
+    networks:
+      - job-intelligence-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # =========================================================================
+  # Frontend Streamlit App - PRODUCTION READY
+  # =========================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: job-intel-frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT}
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER}
+      - SNOWFLAKE_PASSWORD=${SNOWFLAKE_PASSWORD}
+      - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
+      - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE}
+      - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA}
+      - SNOWFLAKE_ROLE=${SNOWFLAKE_ROLE}
+      - ENVIRONMENT=production
+    volumes:
+      - ./frontend:/app
+      - ./secrets.json:/app/secrets.json:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 3G
+        reservations:
+          cpus: '1.0'
+          memory: 1.5G
+    restart: unless-stopped
+    networks:
+      - job-intelligence-network
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  job-intelligence-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  postgres-db-volume:
+    driver: local

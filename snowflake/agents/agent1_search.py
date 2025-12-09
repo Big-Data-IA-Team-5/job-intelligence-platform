@@ -235,12 +235,14 @@ Return ONLY a valid JSON object.
                 company_size, h1b_sponsored_explicit, is_new_grad_role,
                 job_category, qualifications, h1b_approval_rate,
                 h1b_total_petitions, classification_confidence,
-                snippet, posted_date, total_petitions, avg_approval_rate,
+                snippet, posted_date,
+                h1b_employer_name, h1b_city, h1b_state, h1b_avg_wage,
+                sponsorship_score, h1b_risk_level, source,
                 -- Relevance score for better ranking
                 (
                     (CASE WHEN h1b_sponsor = TRUE THEN 10 ELSE 0 END) +
-                    (CASE WHEN avg_approval_rate > 0.8 THEN 5 WHEN avg_approval_rate > 0.6 THEN 3 ELSE 0 END) +
-                    (CASE WHEN total_petitions > 100 THEN 5 WHEN total_petitions > 10 THEN 3 ELSE 0 END) +
+                    (CASE WHEN h1b_approval_rate > 0.8 THEN 5 WHEN h1b_approval_rate > 0.6 THEN 3 ELSE 0 END) +
+                    (CASE WHEN h1b_total_petitions > 100 THEN 5 WHEN h1b_total_petitions > 10 THEN 3 ELSE 0 END) +
                     (CASE WHEN work_model = 'Remote' THEN 3 ELSE 0 END) +
                     (CASE WHEN salary_min IS NOT NULL THEN 2 ELSE 0 END) +
                     (CASE WHEN days_since_posted <= 7 THEN 5 WHEN days_since_posted <= 30 THEN 2 ELSE 0 END)
@@ -293,13 +295,15 @@ Return ONLY a valid JSON object.
         # Add minimum approval rate filter
         min_approval_rate = parsed.get('min_approval_rate')
         if min_approval_rate:
-            sql += f" AND avg_approval_rate >= {min_approval_rate}"
+            sql += f" AND h1b_approval_rate >= {min_approval_rate}"
         
-        # Add job category filter
+        # DISABLED: job_category filter is unreliable - most jobs have NULL or empty values
+        # Many "Data Engineer" jobs are categorized as "Engineering" or have no category
+        # Rely on job title matching instead for better results
         job_category = parsed.get('job_category')
-        if job_category:
-            sanitized_category = str(job_category).replace("'", "''")
-            sql += f" AND job_category = '{sanitized_category}'"
+        # if job_category:
+        #     sanitized_category = str(job_category).replace("'", "''")
+        #     sql += f" AND (job_category = '{sanitized_category}' OR job_category IS NULL OR job_category = '')"
         
         # Add new grad filter
         new_grad_only = parsed.get('new_grad_only', False)
@@ -357,14 +361,14 @@ Return ONLY a valid JSON object.
         if filters.get('min_approval_rate'):
             try:
                 rate = float(filters['min_approval_rate'])
-                sql += f" AND avg_approval_rate >= {rate}"
+                sql += f" AND h1b_approval_rate >= {rate}"
             except (ValueError, TypeError):
                 pass
         
         if filters.get('min_petitions'):
             try:
                 petitions = int(filters['min_petitions'])
-                sql += f" AND total_petitions >= {petitions}"
+                sql += f" AND h1b_total_petitions >= {petitions}"
             except (ValueError, TypeError):
                 pass
         

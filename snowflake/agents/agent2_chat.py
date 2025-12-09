@@ -30,11 +30,26 @@ class JobIntelligenceAgent:
         )
         logger.info("✅ Agent 2 (Chat Intelligence) initialized")
     
-    def _analyze_intent_with_llm(self, question: str, resume_context: str = None) -> Dict:
-        """Use Snowflake Cortex LLM to analyze user intent and extract entities with full schema awareness and resume context."""
+    def _analyze_intent_with_llm(self, question: str, resume_context: str = None, chat_history: list = None) -> Dict:
+        """Use Snowflake Cortex LLM to analyze user intent and extract entities with full schema awareness, resume context, and conversation history."""
         cursor = self.conn.cursor()
         
         try:
+            # Build chat history context for follow-up questions
+            history_section = ""
+            if chat_history and len(chat_history) > 0:
+                history_section = "\n**Previous Conversation:**\n"
+                for msg in chat_history[-3:]:  # Last 3 messages for context
+                    history_section += f"User: {msg.get('user', '')}\n"
+                    history_section += f"Assistant: {msg.get('assistant', '')[:200]}...\n\n"
+                history_section += """**IMPORTANT - Use conversation history to:**
+1. Resolve pronouns: "this company" → refer to company mentioned earlier
+2. Infer missing entities: "whom to contact" → use company from previous query  
+3. Understand follow-ups: "attorney" → if previous was about company X, find attorney for company X
+4. Track context: if user asked about Dassault, next queries likely about Dassault
+
+"""
+            
             # Add resume context if available
             resume_section = ""
             if resume_context:
@@ -142,6 +157,7 @@ Return a JSON object with:
 "give me career advice" → {{"intent": "career_advice", "job_title": null, "location": null, "company": null, "keywords": ["career", "advice"]}}
 
 **Question to analyze:** "{question}"
+{history_section}
 {resume_section}
 
 Respond ONLY with the JSON object, no other text."""
@@ -181,19 +197,26 @@ Respond ONLY with the JSON object, no other text."""
         finally:
             cursor.close()
     
-    def ask(self, question: str, resume_context: str = None) -> Dict:
+    def ask(self, question: str, resume_context: str = None, chat_history: list = None) -> Dict:
         """
-        Answer questions using LLM-powered SQL generation with resume awareness.
+        Answer questions using LLM-powered SQL generation with resume awareness and conversation context.
         
         Supports ANY question about:
         - Job search, salary info, H-1B sponsorship, company comparisons, resume analysis, career advice
+        
+        Args:
+            question: User's natural language query
+            resume_context: User's resume text for personalization
+            chat_history: Previous conversation for context (list of {"user": "...", "assistant": "..."})
         """
         logger.info(f"❓ Question: {question}")
         if resume_context:
             logger.info(f"📄 Resume context provided ({len(resume_context)} chars)")
+        if chat_history:
+            logger.info(f"💬 Chat history provided ({len(chat_history)} messages)")
         
-        # Use LLM to understand intent and extract entities (with resume context)
-        intent_analysis = self._analyze_intent_with_llm(question, resume_context)
+        # Use LLM to understand intent and extract entities (with resume context and chat history)
+        intent_analysis = self._analyze_intent_with_llm(question, resume_context, chat_history)
         
         logger.info(f"🧠 LLM Analysis: {intent_analysis}")
         
@@ -244,11 +267,37 @@ Respond ONLY with the JSON object, no other text."""
                     companies = [company]
             return self._compare_companies(companies)
         
-        # Fallback to keyword matching if LLM intent is unclear
+        # Smart fallback: Use keyword matching ONLY to redirect if LLM missed it
+        # Trust LLM for everything else but help with edge cases
         else:
             q_lower = question.lower()
             
-            if any(w in q_lower for w in ['looking for', 'find', 'search', 'jobs', 'openings', 'positions', 'show me', 'list', 'want job', 'need job', 'hiring', 'internship']):
+            # Visa-related job searches (OPT, CPT, H-1B jobs)
+            if any(visa in q_lower for visa in ['opt', 'cpt', 'f-1', 'h-1b jobs', 'h1b jobs', 'visa jobs', 'sponsor companies']):
+                logger.info(f"⚠️ LLM returned intent='{intent}' but query is visa job search - routing to job search")
+                return self._search_jobs(question, job_title, location)
+            
+            # Salary queries without enough context
+            if any(w in q_lower for w in ['salary', 'pay', 'compensation', 'wage']) and not job_title:
+                logger.info(f"⚠️ Salary query without job title - need more info")
+                return self._error_response("Please specify a job title (e.g., 'software engineer salary' or 'data analyst pay in Boston')")
+            
+            # H-1B/sponsorship queries without company
+            if any(w in q_lower for w in ['h-1b', 'h1b', 'sponsor', 'visa', 'approval rate']) and 'job' not in q_lower:
+                logger.info(f"⚠️ Sponsorship query - checking for company")
+                if not company:
+                    company = self._extract_company(question)
+                if company:
+                    return self._get_sponsorship_info(company)
+                else:
+                    return self._error_response("Please specify a company name (e.g., 'does Amazon sponsor H-1B?')")
+            
+            # If query has job-related keywords, assume job search (LLM fallback)
+            if any(w in q_lower for w in ['job', 'jobs', 'position', 'positions', 'opening', 'openings', 
+                                           'role', 'roles', 'work', 'career', 'hiring', 'internship', 
+                                           'intern', 'looking for', 'find', 'search', 'show me', 'list',
+                                           'engineer', 'developer', 'analyst', 'scientist', 'manager']):
+                logger.info(f"⚠️ LLM returned intent='{intent}' but query has job keywords - routing to job search")
                 return self._search_jobs(question, job_title, location)
             
             elif any(w in q_lower for w in ['salary', 'pay', 'wage', 'how much', 'compensation', 'earn']):
@@ -275,13 +324,43 @@ Respond ONLY with the JSON object, no other text."""
     def _normalize_location_to_state(self, location: str) -> str:
         """Convert location names to state codes for H-1B database queries."""
         state_map = {
+            # States
             'massachusetts': 'MA', 'california': 'CA', 'new york': 'NY', 'texas': 'TX',
             'florida': 'FL', 'illinois': 'IL', 'washington': 'WA', 'georgia': 'GA',
             'virginia': 'VA', 'north carolina': 'NC', 'new jersey': 'NJ', 'pennsylvania': 'PA',
-            'ohio': 'OH', 'michigan': 'MI', 'colorado': 'CO', 'arizona': 'AZ'
+            'ohio': 'OH', 'michigan': 'MI', 'colorado': 'CO', 'arizona': 'AZ',
+            # Major cities
+            'boston': 'MA', 'cambridge': 'MA',
+            'san francisco': 'CA', 'san jose': 'CA', 'bay area': 'CA', 'palo alto': 'CA', 'los angeles': 'CA',
+            'seattle': 'WA',
+            'nyc': 'NY', 'new york city': 'NY',
+            'austin': 'TX', 'dallas': 'TX', 'houston': 'TX',
+            'chicago': 'IL',
+            'atlanta': 'GA',
+            'denver': 'CO',
+            'miami': 'FL',
+            'philadelphia': 'PA'
         }
         loc_lower = location.lower().strip()
         return state_map.get(loc_lower, location.upper()[:2])  # Default to first 2 chars uppercase
+    
+    def _format_phone_number(self, phone: str) -> str:
+        """Format phone number to US format: +1 (XXX) XXX-XXXX"""
+        if not phone:
+            return None
+        
+        # Remove any non-digit characters
+        digits = ''.join(c for c in str(phone) if c.isdigit())
+        
+        # Handle 11-digit US phone numbers (starting with 1)
+        if len(digits) == 11 and digits.startswith('1'):
+            return f"+1 ({digits[1:4]}) {digits[4:7]}-{digits[7:]}"
+        # Handle 10-digit US phone numbers
+        elif len(digits) == 10:
+            return f"+1 ({digits[0:3]}) {digits[3:6]}-{digits[6:]}"
+        # Return as-is if format doesn't match
+        else:
+            return phone
     
     def _get_contact_info(self, company: str, location: str = None) -> Dict:
         """Get employer + attorney contact information by company or location."""
@@ -317,7 +396,7 @@ Respond ONLY with the JSON object, no other text."""
                     COUNT(*) as total_cases,
                     SUM(CASE WHEN case_status = 'Certified' THEN 1 ELSE 0 END) as certified_cases,
                     ROUND(SUM(CASE WHEN case_status = 'Certified' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as approval_rate
-                FROM raw.h1b_raw
+                FROM RAW.H1B_RAW
                 WHERE (worksite_state = '{state_code}' OR worksite_city ILIKE '%{location}%')
                   AND agent_attorney_email_address IS NOT NULL
                   AND lawfirm_name_business_name IS NOT NULL
@@ -343,7 +422,8 @@ Respond ONLY with the JSON object, no other text."""
                     answer += f"**🏢 Law Firm:** {data[0]}  \n"
                     answer += f"**📧 Email:** {data[3]}  \n"
                     if data[4]:
-                        answer += f"**📱 Phone:** {data[4]}  \n"
+                        formatted_phone = self._format_phone_number(data[4])
+                        answer += f"**📱 Phone:** {formatted_phone}  \n"
                     answer += f"**📍 Location:** {data[5]}, {data[6]}  \n"
                     answer += f"**📊 Cases Handled:** {data[7]} total cases  \n"
                     answer += f"**✅ Approval Rate:** {data[9]}%  \n\n"
@@ -374,7 +454,7 @@ Respond ONLY with the JSON object, no other text."""
                 agent_attorney_phone,
                 lawfirm_name_business_name,
                 COUNT(*) OVER (PARTITION BY employer_name) as total_filings
-            FROM raw.h1b_raw
+            FROM RAW.H1B_RAW
             WHERE employer_name ILIKE '%{company}%'
               AND case_status = 'Certified'
               AND (employer_poc_email IS NOT NULL 
@@ -419,7 +499,8 @@ Respond ONLY with the JSON object, no other text."""
             if data[1]:  # POC email
                 answer += f"**📧 Email:** {data[1]}  \n"
             if data[2]:  # POC phone
-                answer += f"**📱 Phone:** {data[2]}  \n"
+                formatted_poc_phone = self._format_phone_number(data[2])
+                answer += f"**📱 Phone:** {formatted_poc_phone}  \n"
             if data[3]:  # POC title
                 answer += f"**👤 Title:** {data[3]}  \n"
             
@@ -430,7 +511,8 @@ Respond ONLY with the JSON object, no other text."""
             if data[6]:  # Attorney email
                 answer += f"**📧 Email:** {data[6]}  \n"
             if data[7]:  # Attorney phone
-                answer += f"**📱 Phone:** {data[7]}  \n"
+                formatted_attorney_phone = self._format_phone_number(data[7])
+                answer += f"**📱 Phone:** {formatted_attorney_phone}  \n"
             if data[8]:  # Law firm
                 answer += f"**🏢 Law Firm:** {data[8]}  \n"
             
@@ -480,7 +562,7 @@ Respond ONLY with the JSON object, no other text."""
                 ROUND(MIN(wage_rate_of_pay_from), 0) as min_salary,
                 ROUND(MAX(wage_rate_of_pay_from), 0) as max_salary,
                 ROUND(AVG(prevailing_wage), 0) as prevailing_wage
-            FROM raw.h1b_raw
+            FROM RAW.H1B_RAW
             WHERE job_title ILIKE '%{job_title}%'
               {f"AND (worksite_city ILIKE '%{location}%' OR worksite_state ILIKE '%{location}%')" if location else ''}
               AND case_status = 'Certified'
@@ -569,7 +651,9 @@ Respond ONLY with the JSON object, no other text."""
                 filings_6mo,
                 avg_wage_offered,
                 is_violator,
-                risk_level
+                risk_level,
+                -- Calculate REAL approval rate: certified / total filings
+                ROUND(total_certified * 100.0 / NULLIF(total_filings, 0), 2) as real_approval_rate
             FROM processed.employer_intelligence
             WHERE employer_clean ILIKE '%{company.upper()}%'
                OR employer_original ILIKE '%{company}%'
@@ -600,9 +684,10 @@ Respond ONLY with the JSON object, no other text."""
             answer += f"### {badge} Sponsor\n\n"
             answer += f"**Overall Score:** {score:.1f}/100  \n\n"
             
-            # Statistics
+            # Statistics - Use REAL approval rate (index 10)
+            real_approval_rate = data[10] if len(data) > 10 else (data[4] / data[3] * 100 if data[3] > 0 else 0)
             answer += f"### 📊 Statistics (FY2025 Q3)\n\n"
-            answer += f"**✅ Approval Rate:** {data[2]*100:.1f}%  \n"
+            answer += f"**✅ Approval Rate:** {real_approval_rate:.1f}%  \n"
             answer += f"**📋 Total Filings:** {data[3]:,}  \n"
             answer += f"**✔️ Certified:** {data[4]:,}  \n"
             answer += f"**❌ Denied:** {data[5]:,}  \n"
@@ -661,7 +746,10 @@ Respond ONLY with the JSON object, no other text."""
                 total_filings,
                 avg_wage_offered,
                 risk_level,
-                filings_6mo
+                filings_6mo,
+                total_certified,
+                -- Calculate REAL approval rate
+                ROUND(total_certified * 100.0 / NULLIF(total_filings, 0), 2) as real_approval_rate
             FROM processed.employer_intelligence
             WHERE {conditions}
             ORDER BY sponsorship_score DESC
@@ -679,9 +767,11 @@ Respond ONLY with the JSON object, no other text."""
             for i, data in enumerate(results, 1):
                 # Add rank emoji
                 rank_emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉"
+                # Use real approval rate (index 8)
+                real_rate = data[8] if len(data) > 8 else (data[7] / data[3] * 100 if data[3] > 0 else 0)
                 answer += f"## {rank_emoji} {i}. {data[0]}\n\n"
                 answer += f"**📈 Sponsorship Score:** {data[1]:.1f}/100  \n"
-                answer += f"**✅ Approval Rate:** {data[2]*100:.1f}%  \n"
+                answer += f"**✅ Approval Rate:** {real_rate:.1f}%  \n"
                 answer += f"**📋 Total Filings:** {data[3]:,}  \n"
                 
                 # Format salary
@@ -764,8 +854,10 @@ Respond ONLY with the JSON object, no other text."""
                     
                     # H-1B sponsorship info
                     if job.get('H1B_SPONSOR'):
-                        if job.get('AVG_APPROVAL_RATE'):
-                            approval_rate = job['AVG_APPROVAL_RATE'] * 100
+                        # Try both field names for backward compatibility
+                        approval_rate_val = job.get('H1B_APPROVAL_RATE') or job.get('AVG_APPROVAL_RATE')
+                        if approval_rate_val:
+                            approval_rate = approval_rate_val * 100
                             answer += f"**✅ H-1B Sponsor:** Yes ({approval_rate:.0f}% approval rate)  \n"
                         else:
                             answer += f"**✅ H-1B Sponsor:** Yes  \n"
@@ -780,8 +872,16 @@ Respond ONLY with the JSON object, no other text."""
                         elif days <= 7:
                             answer += f"**📅 Posted:** {days} days ago  \n"
                     
-                    # Apply link as button-style
-                    answer += f"\n**[🔗 Apply Now]({job['URL']})**\n\n"
+                    # Apply link as button-style with fallback
+                    job_url = job.get('URL', '').strip()
+                    if job_url and job_url.startswith('http'):
+                        answer += f"\n**[🔗 Apply Now]({job_url})**\n\n"
+                    else:
+                        # Generate search URL if no direct URL available
+                        company = job['COMPANY'].replace(' ', '+')
+                        title = job['TITLE'].replace(' ', '+')
+                        search_url = f"https://www.google.com/search?q={company}+{title}+jobs"
+                        answer += f"\n**[🔗 Search Job]({search_url})**\n\n"
                     
                     # Divider between jobs
                     answer += "---\n\n"

@@ -219,17 +219,20 @@ async def get_top_companies(
         
         cursor.execute(f"""
             SELECT 
-                company,
+                j.company,
                 COUNT(*) as job_count,
-                MAX(h1b_sponsor) as h1b_sponsor,
-                AVG(h1b_approval_rate) as avg_approval_rate
-            FROM jobs_processed
-            WHERE company IS NOT NULL
-                AND company NOT IN ('United States', 'USA', 'US', 'International', 'INTERNATIONAL')
-                AND company NOT ILIKE 'international%'
-                AND company NOT IN ('AR', 'BR', 'HI', 'CA', 'NY', 'TX', 'FL', 'IL', 'PA', 'OH', 'GA', 'NC', 'MI', 'NJ', 'VA', 'WA', 'AZ', 'MA', 'TN', 'IN', 'MO', 'MD', 'WI', 'CO', 'MN', 'SC', 'AL', 'LA', 'KY', 'OR', 'OK', 'CT', 'UT', 'IA', 'NV', 'AR', 'MS', 'KS', 'NM', 'NE', 'WV', 'ID', 'HI', 'NH', 'ME', 'MT', 'RI', 'DE', 'SD', 'ND', 'AK', 'VT', 'WY')
-                AND LENGTH(company) > 2
-            GROUP BY company
+                MAX(j.h1b_sponsor) as h1b_sponsor,
+                -- Calculate REAL approval rate: total_certified / total_filings
+                MAX(e.total_certified * 100.0 / NULLIF(e.total_filings, 0)) as avg_approval_rate
+            FROM jobs_processed j
+            LEFT JOIN employer_intelligence e
+                ON UPPER(j.company_clean) = e.employer_clean
+            WHERE j.company IS NOT NULL
+                AND j.company NOT IN ('United States', 'USA', 'US', 'International', 'INTERNATIONAL')
+                AND j.company NOT ILIKE 'international%'
+                AND j.company NOT IN ('AR', 'BR', 'HI', 'CA', 'NY', 'TX', 'FL', 'IL', 'PA', 'OH', 'GA', 'NC', 'MI', 'NJ', 'VA', 'WA', 'AZ', 'MA', 'TN', 'IN', 'MO', 'MD', 'WI', 'CO', 'MN', 'SC', 'AL', 'LA', 'KY', 'OR', 'OK', 'CT', 'UT', 'IA', 'NV', 'AR', 'MS', 'KS', 'NM', 'NE', 'WV', 'ID', 'HI', 'NH', 'ME', 'MT', 'RI', 'DE', 'SD', 'ND', 'AK', 'VT', 'WY')
+                AND LENGTH(j.company) > 2
+            GROUP BY j.company
             ORDER BY job_count DESC
             LIMIT {limit}
         """)
@@ -333,19 +336,22 @@ async def get_h1b_sponsors(
         
         cursor.execute(f"""
             SELECT 
-                company,
+                j.company,
                 COUNT(*) as job_count,
                 TRUE as h1b_sponsor,
-                AVG(h1b_approval_rate) as avg_approval_rate
-            FROM jobs_processed
-            WHERE h1b_sponsor = TRUE
-                AND company IS NOT NULL
-                AND company NOT IN ('United States', 'USA', 'US', 'International', 'INTERNATIONAL', 'ICE')
-                AND company NOT ILIKE 'international%'
-                AND company NOT IN ('AR', 'BR', 'HI', 'CA', 'NY', 'TX', 'FL', 'IL', 'PA', 'OH', 'GA', 'NC', 'MI', 'NJ', 'VA', 'WA', 'AZ', 'MA', 'TN', 'IN', 'MO', 'MD', 'WI', 'CO', 'MN', 'SC', 'AL', 'LA', 'KY', 'OR', 'OK', 'CT', 'UT', 'IA', 'NV', 'AR', 'MS', 'KS', 'NM', 'NE', 'WV', 'ID', 'HI', 'NH', 'ME', 'MT', 'RI', 'DE', 'SD', 'ND', 'AK', 'VT', 'WY')
-                AND LENGTH(company) > 2
-            GROUP BY company
-            HAVING AVG(h1b_approval_rate) > 0
+                -- Calculate REAL approval rate: total_certified / total_filings
+                MAX(e.total_certified * 100.0 / NULLIF(e.total_filings, 0)) as avg_approval_rate
+            FROM jobs_processed j
+            LEFT JOIN employer_intelligence e
+                ON UPPER(j.company_clean) = e.employer_clean
+            WHERE j.h1b_sponsor = TRUE
+                AND j.company IS NOT NULL
+                AND j.company NOT IN ('United States', 'USA', 'US', 'International', 'INTERNATIONAL', 'ICE')
+                AND j.company NOT ILIKE 'international%'
+                AND j.company NOT IN ('AR', 'BR', 'HI', 'CA', 'NY', 'TX', 'FL', 'IL', 'PA', 'OH', 'GA', 'NC', 'MI', 'NJ', 'VA', 'WA', 'AZ', 'MA', 'TN', 'IN', 'MO', 'MD', 'WI', 'CO', 'MN', 'SC', 'AL', 'LA', 'KY', 'OR', 'OK', 'CT', 'UT', 'IA', 'NV', 'AR', 'MS', 'KS', 'NM', 'NE', 'WV', 'ID', 'HI', 'NH', 'ME', 'MT', 'RI', 'DE', 'SD', 'ND', 'AK', 'VT', 'WY')
+                AND LENGTH(j.company) > 2
+            GROUP BY j.company
+            HAVING MAX(e.total_certified * 100.0 / NULLIF(e.total_filings, 0)) > 0
             ORDER BY job_count DESC, avg_approval_rate DESC
             LIMIT {limit}
         """)

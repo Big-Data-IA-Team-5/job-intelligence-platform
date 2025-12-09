@@ -1,10 +1,14 @@
 """
-Chat API endpoint for Agent 2 with Smart Intent Detection
+Chat API endpoint for Agent 2 with LLM-Powered Intent Detection
 """
 from fastapi import APIRouter, HTTPException
 import sys
 from pathlib import Path
-import re
+import snowflake.connector
+import os
+from dotenv import load_dotenv
+import json
+import logging
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -12,117 +16,94 @@ sys.path.insert(0, str(project_root))
 
 from snowflake.agents.agent2_chat import JobIntelligenceAgent
 
+load_dotenv('config/.env')
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
+# Store conversation context in memory (in production, use Redis/database)
+conversation_history = {}
 
-def detect_intent(query: str) -> str:
-    """
-    Detect user intent: 'job_search' or 'question'
-    
-    Job search indicators:
-    - Job titles (engineer, developer, analyst, manager, etc.)
-    - Action words (looking for, need, want, hire, apply)
-    - Job-related keywords (position, role, opening, vacancy)
-    
-    Question indicators:
-    - Question words (who, what, where, when, how, which)
-    - Comparison words (vs, versus, compare, better)
-    - Information requests (tell me, show me, give me)
-    """
-    query_lower = query.lower().strip()
-    
-    # Very short queries - likely job search
-    if len(query_lower.split()) <= 3:
-        # Check if it's a simple job title search
-        job_keywords = ['engineer', 'developer', 'analyst', 'scientist', 'manager', 'designer',
-                       'consultant', 'specialist', 'coordinator', 'director', 'architect',
-                       'intern', 'job', 'jobs', 'position', 'role', 'opening']
-        if any(keyword in query_lower for keyword in job_keywords):
-            return "job_search"
-    
-    # Strong question indicators (must start with or contain question words)
-    question_starters = [
-        r'^(who|what|where|when|why|how|which|does|is|can|should|tell|give|show)',
-        r'\b(contact|email|phone|reach|attorney|lawyer|firm)\b',
-        r'\bsalary\s+(for|of|at|range)\b',
-        r'\b(approval rate|petition|compare|versus|vs|better|difference)\b',
-        r'\b(does .* sponsor|is .* safe|should i)\b',
-    ]
-    
-    # Job search indicators (more specific patterns)
-    job_search_patterns = [
-        r'\b(software|data|machine learning|full stack|backend|frontend|devops|cloud)\s+(engineer|developer|scientist|analyst)\b',
-        r'\b(product|project|program|engineering|technical)\s+manager\b',
-        r'\b(looking for|need|want|searching for|find|apply)\s+(a |an )?(job|position|role|work)\b',
-        r'\bjob[s]?\s+(at|in|for|with)\b',
-        r'\b(entry level|new grad|junior|senior|lead|principal|staff)\s+(engineer|developer|position|role)\b',
-        r'\b(remote|hybrid|onsite)\s+(job|position|role|work)\b',
-        r'\b(intern|internship)\b',
-    ]
-    
-    # Calculate scores
-    question_score = sum(1 for pattern in question_starters if re.search(pattern, query_lower))
-    job_search_score = sum(1 for pattern in job_search_patterns if re.search(pattern, query_lower))
-    
-    # Strong question indicator (starts with question word or has contact/salary keywords)
-    if question_score >= 2:
-        return "question"
-    
-    # Clear job search indicators
-    if job_search_score > 0:
-        return "job_search"
-    
-    # If starts with question word, it's a question
-    if re.match(r'^(who|what|where|when|why|how|which|does|is|can|should)', query_lower):
-        return "question"
-    
-    # Check for simple job title mentions (default to job search)
-    simple_job_titles = ['engineer', 'developer', 'analyst', 'scientist', 'manager', 'designer', 
-                         'consultant', 'specialist', 'coordinator', 'director', 'architect',
-                         'intern', 'internship']
-    
-    if any(title in query_lower for title in simple_job_titles):
-        return "job_search"
-    
-    # Default to question for ambiguous queries
-    return "question"
 
+from pydantic import BaseModel
+from typing import Optional, List, Dict
+
+class ChatRequest(BaseModel):
+    question: str
+    job_role: Optional[str] = None
+    resume_text: Optional[str] = None
+    user_id: str = "anonymous"
+    chat_history: Optional[List[Dict]] = None
 
 @router.post("/ask")
-async def ask_question(question: str, job_role: str = None, resume_context: str = None):
+async def ask_question(request: ChatRequest):
     """
-    Ask any question about jobs, H-1B, salaries, sponsorship.
+    Intelligent chat endpoint powered by Agent 2's LLM reasoning.
+    
+    Agent 2 has full intelligence with:
+    - Complete database schema awareness (H1B_RAW, JOBS_PROCESSED, EMPLOYER_INTELLIGENCE)
+    - LLM-powered intent detection (job_search, salary_info, h1b_sponsorship, etc.)
+    - Resume context integration for personalized matching
+    - Entity extraction (job_title, location, company, skills)
+    - Multi-intent routing (job search, salary analysis, H-1B sponsorship, contact info, comparisons)
+    
+    This endpoint simply passes requests to Agent 2's intelligence.
+    
+    Parameters:
+    - question: User's natural language query
+    - resume_text: User's resume text for context (persists in conversation)
+    - user_id: User identifier for conversation tracking
+    - chat_history: Previous conversation context
     
     Examples:
-    - "Who to contact at Amazon for H-1B?"
-    - "What salary for Software Engineer in Seattle?"
-    - "Does Google sponsor H-1B?"
-    - "Compare Amazon vs Microsoft"
-    
-    Optional parameters:
-    - job_role: Pre-extracted job titles from LLM
-    - resume_context: User's resume text for personalized recommendations
-    
-    Returns natural language answer with data sources.
+    - "data engineer jobs in Boston" → Agent 2 detects job_search, extracts entities, calls Agent 1
+    - "what's the salary for SDE at Amazon?" → Agent 2 detects salary_info, queries H-1B data
+    - "compare Google vs Microsoft" → Agent 2 detects company_comparison, analyzes both
+    - "who should I contact at Amazon?" → Agent 2 detects contact_info, retrieves POC details
     """
-    if not question or len(question.strip()) < 3:
+    if not request.question or len(request.question.strip()) < 3:
         raise HTTPException(400, "Question too short")
+    
+    # Store conversation history AND resume context for user
+    if request.user_id not in conversation_history:
+        conversation_history[request.user_id] = []
+    
+    logger.info(f"🔍 User {request.user_id} asked: '{request.question}'")
+    
+    if request.resume_text:
+        logger.info(f"📄 Resume context provided ({len(request.resume_text)} chars)")
+    
+    # Use chat_history from request if provided, otherwise use stored history
+    chat_hist = request.chat_history if request.chat_history else conversation_history.get(request.user_id, [])
+    logger.info(f"💬 Using chat history: {len(chat_hist)} messages (from {'request' if request.chat_history else 'memory'})")
     
     agent = JobIntelligenceAgent()
     
     try:
-        # If job_role provided, inject it into the question context
-        # This helps Agent 2 extract the job title correctly
-        if job_role:
-            # Ensure the job role is mentioned in the question
-            if job_role.lower() not in question.lower():
-                question = f"{question} (Job: {job_role})"
+        # Agent 2 handles ALL intelligence - intent detection, entity extraction, routing
+        # Resume text is passed and persists in conversation context
+        # Use chat_history from frontend (context manager) for better context awareness
+        result = agent.ask(request.question, resume_context=request.resume_text, chat_history=chat_hist)
         
-        # Pass resume_context to agent for personalized responses
-        result = agent.ask(question, resume_context=resume_context)
+        # Store interaction for future context (merge with incoming history if provided)
+        current_turn = {
+            "user": request.question,
+            "assistant": result['answer'][:500],
+            "has_resume": bool(request.resume_text)  # Track if resume was present
+        }
+        
+        # If chat_history was provided in request, use it as base and add current turn
+        if request.chat_history:
+            conversation_history[request.user_id] = request.chat_history[-9:] + [current_turn]
+        else:
+            conversation_history[request.user_id].append(current_turn)
+            # Keep last 10 interactions
+            if len(conversation_history[request.user_id]) > 10:
+                conversation_history[request.user_id] = conversation_history[request.user_id][-10:]
         
         return {
-            "question": question,
+            "question": request.question,
             "answer": result['answer'],
             "data_points": len(result.get('data', [])),
             "confidence": result.get('confidence', 0.0),
@@ -130,6 +111,7 @@ async def ask_question(question: str, job_role: str = None, resume_context: str 
         }
         
     except Exception as e:
+        logger.error(f"❌ Error: {e}")
         raise HTTPException(500, f"Error: {str(e)}")
     
     finally:

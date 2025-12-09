@@ -27,7 +27,7 @@ default_args = {
     'email_on_retry': False,
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
-    'execution_timeout': timedelta(hours=3),  # 3 hours for comprehensive scraping
+    'execution_timeout': timedelta(hours=8),  # 8 hours for 15 days of data scraping
 }
 
 def scrape_internship_jobs(**context):
@@ -47,7 +47,7 @@ def scrape_internship_jobs(**context):
     cleanup_old_s3_files(prefix='raw/airtable/internships/', days_to_keep=30)
     
     # Configuration - PRODUCTION OPTIMIZED
-    hours_lookback = 96   # 4 days (recent jobs only)
+    hours_lookback = 360  # 15 days (extended to get more job data)
     num_workers = 3       # 3 parallel workers (reduced to prevent Selenium Grid overload)
     
     print(f"\n⚙️  Configuration:")

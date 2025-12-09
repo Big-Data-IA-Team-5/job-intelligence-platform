@@ -18,7 +18,8 @@ h1b_aggregated AS (
         employer_name as employer_name_original,
         COUNT(*) as total_petitions,
         SUM(CASE WHEN case_status = 'Certified' THEN 1 ELSE 0 END) as certified_petitions,
-        AVG(CASE WHEN case_status = 'Certified' THEN 1.0 ELSE 0.0 END) as avg_approval_rate,
+        -- Calculate REAL approval rate: certified / total filings
+        (SUM(CASE WHEN case_status = 'Certified' THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) as avg_approval_rate,
         MAX(worksite_city) as h1b_city,
         MAX(worksite_state) as h1b_state
     FROM {{ source('raw', 'h1b_raw') }}
