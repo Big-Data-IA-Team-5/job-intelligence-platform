@@ -14,13 +14,15 @@ x-airflow-common:
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
-    # PRODUCTION PERFORMANCE TUNING
-    AIRFLOW__CORE__PARALLELISM: 32
-    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: 16
-    AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: 3
-    AIRFLOW__SCHEDULER__MAX_TIS_PER_QUERY: 512
-    AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: 10
-    AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: 20
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: 'America/New_York'
+    AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: 'America/New_York'
+    # PRODUCTION PERFORMANCE TUNING - Increased for 16 workers
+    AIRFLOW__CORE__PARALLELISM: 64
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: 32
+    AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: 4
+    AIRFLOW__SCHEDULER__MAX_TIS_PER_QUERY: 1024
+    AIRFLOW__DATABASE__SQL_ALCHEMY_POOL_SIZE: 20
+    AIRFLOW__DATABASE__SQL_ALCHEMY_MAX_OVERFLOW: 40
     _PIP_ADDITIONAL_REQUIREMENTS: ''
     
     # Selenium configuration
@@ -49,6 +51,7 @@ x-airflow-common:
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
     - ../scrapers:/opt/airflow/scrapers
+    - ../scripts:/opt/airflow/scripts
     - ../data:/opt/airflow/data
     - ../dbt:/opt/airflow/dbt
     - ${AIRFLOW_PROJ_DIR:-.}/scraped_jobs:/opt/airflow/scraped_jobs
@@ -137,14 +140,15 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    init: true  # Fix zombie processes
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 3G
+          cpus: '4.0'
+          memory: 6G
         reservations:
-          cpus: '1.0'
-          memory: 2G
+          cpus: '2.0'
+          memory: 4G
     restart: always
     depends_on:
       <<: *airflow-common-depends-on
@@ -164,14 +168,15 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    init: true  # Fix zombie processes
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 4G
+          cpus: '6.0'
+          memory: 8G
         reservations:
-          cpus: '1.0'
-          memory: 2G
+          cpus: '3.0'
+          memory: 6G
     restart: always
     depends_on:
       <<: *airflow-common-depends-on
@@ -191,6 +196,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    init: true  # Fix zombie processes
     restart: always
     depends_on:
       <<: *airflow-common-depends-on

@@ -32,7 +32,7 @@ class ComprehensiveAirtableScraper:
         Args:
             hours_lookback: Number of hours to look back for jobs (default: 720 = 30 days)
             max_retries: Maximum retries for failed categories (default: 3)
-            num_workers: Number of parallel workers (default: 5)
+            num_workers: Number of parallel workers (default: 5 for faster scraping)
         """
         self.num_workers = num_workers
         self.lock = threading.Lock()
@@ -268,10 +268,21 @@ class ComprehensiveAirtableScraper:
                         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
                         chrome_options.add_argument('--disable-gpu')
                         chrome_options.add_argument('--window-size=1920,1080')
+                        # Performance optimizations - disable unnecessary loading
+                        chrome_options.add_argument('--blink-settings=imagesEnabled=false')
+                        chrome_options.add_argument('--disable-extensions')
+                        chrome_options.add_argument('--disable-plugins')
+                        chrome_options.add_argument('--disable-images')
+                        chrome_options.add_argument('--disable-css')
+                        chrome_options.add_argument('--disable-javascript-harmony')
                         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
                         chrome_options.add_experimental_option('useAutomationExtension', False)
+                        chrome_options.add_experimental_option("prefs", {
+                            "profile.managed_default_content_settings.images": 2,
+                            "profile.default_content_setting_values.notifications": 2
+                        })
                         chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-                        chrome_options.page_load_strategy = 'normal'
+                        chrome_options.page_load_strategy = 'eager'  # Don't wait for full page load
                         # Use Selenium Grid with retry logic
                         selenium_url = os.getenv('SELENIUM_REMOTE_URL', 'http://selenium-chrome:4444/wd/hub')
                         
@@ -304,16 +315,16 @@ class ComprehensiveAirtableScraper:
                     
                     # Wait for Airtable to fully render the data rows (reduced timeout)
                     try:
-                        WebDriverWait(driver, 30).until(
+                        WebDriverWait(driver, 8).until(
                             EC.presence_of_element_located((By.CSS_SELECTOR, 'div.dataRow[data-rowid]'))
                         )
                         with self.lock:
                             logger.info("✓ Table rows detected")
-                        time.sleep(5)  # Brief wait for stabilization
+                        time.sleep(0.5)  # Brief wait for stabilization
                     except TimeoutException:
                         with self.lock:
                             logger.warning("⚠️  Timeout waiting for dataRow elements - using fallback wait...")
-                        time.sleep(15)  # Shorter fallback
+                        time.sleep(2)  # Shorter fallback
                     
                     with self.lock:
                         logger.info("\n🔄 Scrolling horizontally to load all columns...")
@@ -357,8 +368,8 @@ class ComprehensiveAirtableScraper:
                         logger.error(f"\n❌ Error on attempt {attempt}: {str(e)[:100]}")
                     if attempt < self.max_retries:
                         with self.lock:
-                            logger.info(f"⏳ Waiting 10 seconds before retry...")
-                        time.sleep(10)
+                            logger.info(f"⏳ Waiting 3 seconds before retry...")
+                        time.sleep(3)
                         if driver:
                             try:
                                 driver.quit()
@@ -426,10 +437,10 @@ class ComprehensiveAirtableScraper:
             if table_container:
                 for i in range(10):
                     driver.execute_script("arguments[0].scrollLeft += 300;", table_container)
-                    time.sleep(0.3)
+                    time.sleep(0.05)
                 
                 driver.execute_script("arguments[0].scrollLeft = 0;", table_container)
-                time.sleep(1)
+                time.sleep(0.2)
                 return
         except:
             pass
@@ -438,10 +449,10 @@ class ComprehensiveAirtableScraper:
             body = driver.find_element(By.TAG_NAME, "body")
             for _ in range(15):
                 body.send_keys(Keys.ARROW_RIGHT)
-                time.sleep(0.2)
+                time.sleep(0.05)
             for _ in range(15):
                 body.send_keys(Keys.ARROW_LEFT)
-                time.sleep(0.2)
+                time.sleep(0.05)
         except:
             pass
     
@@ -464,7 +475,7 @@ class ComprehensiveAirtableScraper:
                 with self.lock:
                     logger.info(f"  → Scroll {scroll_attempts + 1} | Total jobs: {len(all_jobs)}")
             
-            time.sleep(0.8)  # Reduced from 2s - Airtable loads quickly
+            time.sleep(0.3)  # Minimal wait for Airtable to load
             
             new_jobs, found_old_job = self.extract_visible_jobs(driver, seen_titles, category)
             all_jobs.extend(new_jobs)
@@ -503,19 +514,18 @@ class ComprehensiveAirtableScraper:
         """Perform scrolling to load more content - optimized for speed"""
         try:
             driver.execute_script("window.scrollBy(0, 600);")
-            time.sleep(0.2)  # Reduced from 0.5s
+            time.sleep(0.05)
             
             scrollable_divs = driver.find_elements(By.CSS_SELECTOR, 'div[style*="overflow"]')
             for div in scrollable_divs[:3]:
                 try:
                     driver.execute_script("arguments[0].scrollTop += 600;", div)
-                    time.sleep(0.1)  # Reduced from 0.3s
                 except:
                     pass
             
             body = driver.find_element(By.TAG_NAME, "body")
             body.send_keys(Keys.PAGE_DOWN)
-            time.sleep(0.2)  # Reduced from 0.5s
+            time.sleep(0.05)
             
         except:
             pass

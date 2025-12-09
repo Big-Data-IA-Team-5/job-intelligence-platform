@@ -24,7 +24,7 @@ default_args = {
     'email_on_retry': False,
     'retries': 1,
     'retry_delay': timedelta(minutes=2),
-    'execution_timeout': timedelta(minutes=15),  # Fast timeout for testing
+    'execution_timeout': timedelta(minutes=45),  # Increased for DBT h1b_matched_jobs
 }
 
 def test_scrape_jobs(**context):
@@ -195,7 +195,7 @@ with DAG(
     default_args=default_args,
     description='Quick end-to-end pipeline test (5-10 min)',
     schedule=None,  # Manual trigger only (Airflow 2.x)
-    start_date=pendulum.today('UTC').add(days=-1),
+    start_date=pendulum.today('America/New_York').add(days=-1),
     catchup=False,
     tags=['test', 'pipeline', 'quick']
 ) as dag:

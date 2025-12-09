@@ -9,6 +9,7 @@ from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 from datetime import datetime, timedelta
+import pendulum
 import sys
 import os
 import json
@@ -164,7 +165,7 @@ with DAG(
     default_args=default_args,
     description='Graduate jobs scraper pipeline: Scrape -> S3 -> Snowflake',
     schedule_interval='5 2 * * *',  # Run daily at 2:05 AM UTC
-    start_date=datetime(2025, 12, 5, 2, 0),  # Start today at 2 AM
+    start_date=pendulum.datetime(2025, 12, 5, 2, 0, tz="America/New_York"),  # Start at 2 AM EST
     catchup=False,
     tags=['scraper', 'airtable', 'new-grad', 'jobs', 'pipeline'],
 ) as dag:

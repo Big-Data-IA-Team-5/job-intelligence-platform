@@ -183,12 +183,12 @@ Be concise, max 5 items per category."""
         
         # Build ORDER BY clause
         order_by_map = {
-            "most_recent": "posted_date DESC, scraped_at DESC",
+            "most_recent": "scraped_at DESC",
             "highest_salary": "salary_max DESC NULLS LAST, salary_min DESC NULLS LAST",
             "company_az": "company ASC",
             "h1b_rate": "h1b_approval_rate DESC NULLS LAST"
         }
-        order_by = order_by_map.get(filters.sort_by, "posted_date DESC")
+        order_by = order_by_map.get(filters.sort_by, "scraped_at DESC")
         
         # Execute query
         query = f"""
@@ -228,7 +228,7 @@ Be concise, max 5 items per category."""
             FROM jobs_processed
             {where_sql}
             ORDER BY {order_by}
-            LIMIT 500
+            LIMIT 50
         """
         
         logger.info(f"Executing jobs search query: {query[:200]}...")

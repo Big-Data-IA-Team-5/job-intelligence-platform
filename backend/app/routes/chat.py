@@ -84,7 +84,8 @@ async def ask_question(request: ChatRequest):
         # Agent 2 handles ALL intelligence - intent detection, entity extraction, routing
         # Resume text is passed and persists in conversation context
         # Use chat_history from frontend (context manager) for better context awareness
-        result = agent.ask(request.question, resume_context=request.resume_text, chat_history=chat_hist)
+        # Enable debug info for frontend AI intelligence display
+        result = agent.ask(request.question, resume_context=request.resume_text, chat_history=chat_hist, return_debug=True)
         
         # Store interaction for future context (merge with incoming history if provided)
         current_turn = {
@@ -102,13 +103,20 @@ async def ask_question(request: ChatRequest):
             if len(conversation_history[request.user_id]) > 10:
                 conversation_history[request.user_id] = conversation_history[request.user_id][-10:]
         
-        return {
+        # Return response with debug_info for AI intelligence display
+        response = {
             "question": request.question,
             "answer": result['answer'],
             "data_points": len(result.get('data', [])),
             "confidence": result.get('confidence', 0.0),
             "sources": result.get('sources', [])
         }
+        
+        # Include debug_info if present (for AI intelligence display in frontend)
+        if 'debug_info' in result:
+            response['debug_info'] = result['debug_info']
+        
+        return response
         
     except Exception as e:
         logger.error(f"❌ Error: {e}")

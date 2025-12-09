@@ -4,19 +4,25 @@
 
 {{
     config(
-        materialized='table',
+        materialized='incremental',
         unique_key='job_id',
         schema='processing',
         on_schema_change='sync_all_columns',
-        full_refresh=true
+        merge_update_columns=['title', 'company', 'location', 'description', 'scraped_at']
     )
 }}
 
-WITH jobs AS (
-    SELECT * FROM {{ ref('classified_jobs') }}
+WITH deduplicated_jobs AS (
+    -- Use deduplicated jobs to prevent duplicates in EMBEDDED_JOBS
+    SELECT * FROM {{ ref('dedup_jobs') }}
+),
+
+jobs AS (
+    SELECT * FROM {{ ref('classified_jobs') }} c
+    WHERE c.job_id IN (SELECT job_id FROM deduplicated_jobs)
     {% if is_incremental() %}
-    -- Only process new jobs
-    WHERE scraped_at > (SELECT MAX(scraped_at) FROM {{ this }})
+    -- Only process new jobs not already embedded
+    AND c.job_id NOT IN (SELECT job_id FROM {{ this }})
     {% endif %}
 ),
 

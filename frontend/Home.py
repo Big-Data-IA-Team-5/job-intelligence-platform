@@ -149,6 +149,51 @@ if not st.session_state.messages:
     </div>
     """, unsafe_allow_html=True)
     
+    # Resume upload section - FIRST THING USER SEES
+    st.markdown("---")
+    with st.expander("📎 **Upload Resume (Recommended)** - Get personalized job matches", expanded=True):
+        st.caption("💡 Upload your resume first for better, personalized job recommendations based on your skills and experience")
+        upload_file = st.file_uploader("Choose resume (PDF, DOCX, TXT)", type=['pdf', 'docx', 'txt'], key="resume_uploader_initial")
+        
+        if upload_file and not st.session_state.resume_text:
+            current_file_id = f"{upload_file.name}_{upload_file.size}"
+            
+            with st.spinner("🤖 Analyzing resume with AI..."):
+                try:
+                    # Extract text
+                    if upload_file.type == "application/pdf":
+                        import PyPDF2
+                        pdf_reader = PyPDF2.PdfReader(io.BytesIO(upload_file.read()))
+                        resume_text = "".join([page.extract_text() for page in pdf_reader.pages])
+                    elif upload_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                        import docx
+                        doc = docx.Document(io.BytesIO(upload_file.read()))
+                        resume_text = "\n".join([para.text for para in doc.paragraphs])
+                    else:
+                        resume_text = upload_file.read().decode('utf-8')
+                    
+                    # Validate it's actually a resume
+                    text_lower = resume_text.lower()
+                    resume_keywords = ['experience', 'education', 'skills', 'work', 'university', 'degree', 'job', 'project']
+                    has_resume_content = sum(1 for keyword in resume_keywords if keyword in text_lower) >= 3
+                    
+                    if not has_resume_content:
+                        st.error("❌ This doesn't look like a resume. Please upload your actual resume.")
+                    elif len(resume_text.strip()) >= 100:
+                        # Store resume text
+                        st.session_state.resume_text = resume_text
+                        st.session_state.uploaded_resume_id = current_file_id
+                        st.session_state.uploaded_resume = upload_file.name
+                        st.success(f"✅ Resume uploaded: {upload_file.name} ({len(resume_text)} characters)")
+                        st.rerun()
+                    else:
+                        st.error("❌ Resume too short. Please upload a complete resume.")
+                except Exception as e:
+                    st.error(f"❌ Error reading file: {str(e)}")
+    
+    st.markdown("---")
+    st.markdown("#### Or try these examples:")
+    
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🔍 Find jobs", use_container_width=True):
@@ -169,10 +214,16 @@ if not st.session_state.messages:
             st.session_state.trigger_query = True
             st.rerun()
 else:
-    col1, col2 = st.columns([6, 1])
+    col1, col2, col3 = st.columns([5, 2, 1])
     with col1:
         st.markdown("## 🤖 Job Intelligence AI")
     with col2:
+        # Show resume status prominently
+        if st.session_state.resume_text:
+            st.success(f"✅ Resume: {st.session_state.uploaded_resume[:20]}...")
+        else:
+            st.info("💡 No resume uploaded")
+    with col3:
         if st.button("🔄 New", use_container_width=True):
             st.session_state.messages = []
             st.session_state.uploaded_resume = None
@@ -190,6 +241,58 @@ else:
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            
+            # Display AI Intelligence Debug Info (if available)
+            if message["role"] == "assistant" and "debug_info" in message:
+                debug = message["debug_info"]
+                
+                with st.expander("🧠 **AI Intelligence - See How I Processed This**", expanded=False):
+                    st.markdown("---")
+                    
+                    # Show agent and execution time
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.markdown(f"**🤖 Agent:** `{debug.get('agent_used', 'Unknown')}`")
+                    with col2:
+                        st.markdown(f"**⚡ {debug.get('execution_time_ms', 0)}ms**")
+                    
+                    st.markdown("---")
+                    
+                    # Step 1: Intent Analysis
+                    intent_analysis = debug.get('intent_analysis', {})
+                    if intent_analysis:
+                        st.markdown("### 1️⃣ Understanding Your Question")
+                        st.json(intent_analysis, expanded=True)
+                    
+                    # Step 2: SQL Generation (if applicable)
+                    sql_generated = debug.get('sql_generated')
+                    if sql_generated:
+                        st.markdown("### 2️⃣ Generated SQL Query")
+                        st.code(sql_generated, language='sql')
+                    
+                    # Step 3: Processing Steps
+                    steps = debug.get('steps', [])
+                    if steps:
+                        st.markdown("### 3️⃣ Processing Steps")
+                        for i, step in enumerate(steps, 1):
+                            status_icon = "✅" if step.get('status') == 'complete' else "🔄"
+                            st.markdown(f"{status_icon} **{step.get('step', 'Unknown')}**")
+                            # Show SQL inline if present (no nested expanders)
+                            if 'sql' in step:
+                                st.code(step['sql'], language='sql')
+                    
+                    # Context awareness
+                    st.markdown("---")
+                    st.markdown("### 🧠 Context Awareness")
+                    context_cols = st.columns(3)
+                    with context_cols[0]:
+                        resume_icon = "✅" if debug.get('has_resume_context') else "❌"
+                        st.markdown(f"{resume_icon} **Resume**")
+                    with context_cols[1]:
+                        history_icon = "✅" if debug.get('has_chat_history') else "❌"
+                        st.markdown(f"{history_icon} **History**")
+                    with context_cols[2]:
+                        st.markdown(f"💡 **{intent_analysis.get('intent', 'N/A').replace('_', ' ').title()}**")
     
     # Upload section - ALWAYS visible in the middle of conversation
     if not st.session_state.resume_text:
@@ -292,14 +395,8 @@ else:
                             st.error(f"Error: {str(e)}")
 
 
-# Chat input with properly aligned upload button
-input_col, btn_col = st.columns([0.95, 0.05])
-with input_col:
-    prompt = st.chat_input("Message Job Intelligence AI...")
-with btn_col:
-    if st.button("📎" if not st.session_state.resume_text else "✅", key="btn", help="Upload/View Resume"):
-        st.session_state.show_upload = not st.session_state.show_upload
-        st.rerun()
+# Chat input - always visible
+prompt = st.chat_input("Message Job Intelligence AI...")
 
 if prompt:
     # Add user message to history
@@ -360,8 +457,18 @@ if prompt:
                 # Update context manager with this conversation turn
                 st.session_state.context_manager.update_context(prompt, answer)
                 
-                # Add to message history
-                st.session_state.messages.append({"role": "assistant", "content": answer})
+                # Check if we have debug info to display
+                debug_info = response.get("debug_info")
+                if debug_info:
+                    # Store debug info with message for later display
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": answer,
+                        "debug_info": debug_info
+                    })
+                else:
+                    # Add to message history without debug
+                    st.session_state.messages.append({"role": "assistant", "content": answer})
             else:
                 st.session_state.messages.append({"role": "assistant", "content": "❌ Couldn't process request"})
         except Exception as e:

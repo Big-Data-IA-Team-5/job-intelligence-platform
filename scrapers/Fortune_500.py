@@ -79,14 +79,14 @@ except Exception as e:
     SCRAPERAPI_KEY = None
 
 MAX_COMPANIES = None  # Run all companies
-NUM_WORKERS = 8  # Total workers (increased from 6 to 8)
-NUM_SELENIUM_WORKERS = 1  # Only 1 Selenium worker to prevent network overload
-REQUEST_DELAY = (3, 6)  # Increased from (2,4) to (3,6)
-SELENIUM_DELAY = (10, 15)  # Increased from (5,8) to (10,15)
-CHECKPOINT_EVERY = 5
-SELENIUM_TIMEOUT = 40  # Increased from 15 to 40 seconds
-MAX_RETRIES = 1  # Reduced from 3 to 1 for speed
-MAX_SELENIUM_RETRIES = 1  # Reduced from 2 to 1 for speed
+NUM_WORKERS = 16  # Increased from 8 to 16 - FASTER for 500 companies!
+NUM_SELENIUM_WORKERS = 2  # Increased from 1 to 2 for more JS sites
+REQUEST_DELAY = (1, 3)  # Reduced from (3,6) to (1,3) - faster HTTP requests
+SELENIUM_DELAY = (5, 8)  # Reduced from (10,15) to (5,8) - faster page loads
+CHECKPOINT_EVERY = 10  # Increased from 5 to 10 - less I/O
+SELENIUM_TIMEOUT = 30  # Reduced from 40 to 30 - faster timeouts
+MAX_RETRIES = 1  # Keep at 1 for speed
+MAX_SELENIUM_RETRIES = 1  # Keep at 1 for speed
 
 # Companies known to need Selenium (JavaScript-heavy)
 JS_HEAVY_COMPANIES = {
@@ -1307,7 +1307,7 @@ class EnhancedFallbackChain:
                                 driver.execute_script("arguments[0].scrollIntoView(true);", button)
                                 time.sleep(1)
                                 driver.execute_script("arguments[0].click();", button)
-                                time.sleep(4)  # Wait for content to load
+                                time.sleep(1)  # Reduced from 4s - faster scroll loading
                                 print(f"      ✓ Clicked '{btn_text}'")
                                 break
                         except:
@@ -1317,7 +1317,7 @@ class EnhancedFallbackChain:
             
             # Final scroll
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(3)
+            time.sleep(1)  # Reduced from 3s - faster final load
             
             # Get final page source
             html = driver.page_source
@@ -1711,7 +1711,7 @@ class UltraSmartScraper:
                 if JOBSPY_AVAILABLE:
                     print(f"\n[LAST RESORT] Trying JobSpy (Indeed/LinkedIn) for {company_name}...")
                     # Add delay to respect Indeed rate limits
-                    time.sleep(random.uniform(2, 4))
+                    time.sleep(random.uniform(0.5, 1.5))  # Reduced from 2-4s to 0.5-1.5s
                     all_jobs = self.scrape_with_jobspy(company_name)
                     if all_jobs:
                         print(f"✅ JobSpy found {len(all_jobs)} jobs!")
@@ -1932,7 +1932,7 @@ def main():
                 print(f"[Worker {i+1}] Selenium enabled ✅ (JS-heavy sites)")
             else:
                 print(f"[Worker {i+1}] HTTP only (fast scraping)")
-            time.sleep(0.5)  # Stagger worker initialization
+            time.sleep(0.2)  # Reduced from 0.5s - faster startup
         
         # Submit all tasks
         future_to_company = {}

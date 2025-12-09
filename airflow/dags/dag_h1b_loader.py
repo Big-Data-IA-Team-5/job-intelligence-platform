@@ -8,6 +8,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.utils.dates import days_ago
 from datetime import datetime, timedelta
+import pendulum
 import sys
 import os
 import pandas as pd
@@ -242,7 +243,7 @@ with DAG(
     default_args=default_args,
     description='H-1B data loader pipeline: Load -> S3 -> Snowflake (Manual trigger only)',
     schedule_interval=None,  # Manual trigger only - run when new quarterly data is available
-    start_date=days_ago(1),
+    start_date=pendulum.now('America/New_York').subtract(days=1),
     catchup=False,
     tags=['loader', 'h1b', 'data', 'manual', 'pipeline'],
 ) as dag:

@@ -246,6 +246,26 @@ Return ONLY a valid JSON object.
                     (CASE WHEN work_model = 'Remote' THEN 3 ELSE 0 END) +
                     (CASE WHEN salary_min IS NOT NULL THEN 2 ELSE 0 END) +
                     (CASE WHEN days_since_posted <= 7 THEN 5 WHEN days_since_posted <= 30 THEN 2 ELSE 0 END)
+        """
+        
+        # Add resume skill matching to relevance score if provided
+        resume_skills = filters.get('resume_skills', [])
+        if resume_skills:
+            skill_checks = []
+            for skill in resume_skills[:10]:  # Limit to 10 skills
+                sanitized_skill = str(skill).replace("'", "''").replace('%', '').replace('_', '')
+                # Check if skill appears in title, description, or qualifications (20 points per match)
+                skill_checks.append(
+                    f"(CASE WHEN LOWER(title) LIKE '%{sanitized_skill.lower()}%' "
+                    f"OR LOWER(description) LIKE '%{sanitized_skill.lower()}%' "
+                    f"OR LOWER(qualifications) LIKE '%{sanitized_skill.lower()}%' "
+                    f"THEN 20 ELSE 0 END)"
+                )
+            
+            if skill_checks:
+                sql += " +\n                    " + " +\n                    ".join(skill_checks)
+        
+        sql += """
                 ) as relevance_score
             FROM jobs_processed
             WHERE 1=1
@@ -275,6 +295,18 @@ Return ONLY a valid JSON object.
         if company:
             sanitized_company = str(company).replace("'", "''")
             sql += f" AND UPPER(company_clean) LIKE '%{sanitized_company.upper()}%'"
+        
+        # Add company list filter from context (e.g., "jobs in these companies")
+        company_list = filters.get('companies', [])
+        if company_list:
+            company_conditions = []
+            for comp in company_list[:15]:  # Limit to 15 companies
+                sanitized = str(comp).replace("'", "''").strip()
+                if sanitized:
+                    company_conditions.append(f"UPPER(company_clean) LIKE '%{sanitized.upper()}%'")
+            
+            if company_conditions:
+                sql += f" AND ({' OR '.join(company_conditions)})"
         
         # Add location filter from LLM
         location = parsed.get('location')

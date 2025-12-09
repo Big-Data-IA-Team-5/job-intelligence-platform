@@ -140,25 +140,9 @@ st.markdown("""
 ), unsafe_allow_html=True)
 
 # Stats Row
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.markdown(f"""
-    <div class='stat-card'>
-        <div style='font-size: 32px; font-weight: bold; color: #10b981;'>{stats['new_today']:,}</div>
-        <div style='color: #6b7280; font-size: 14px;'>New Today</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col2:
-    st.markdown(f"""
-    <div class='stat-card'>
-        <div style='font-size: 32px; font-weight: bold; color: #667eea;'>{stats['new_this_week']:,}</div>
-        <div style='color: #6b7280; font-size: 14px;'>This Week</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col3:
     st.markdown(f"""
     <div class='stat-card'>
         <div style='font-size: 32px; font-weight: bold; color: #3b82f6;'>{stats['h1b_sponsors']:,}</div>
@@ -166,7 +150,7 @@ with col3:
     </div>
     """, unsafe_allow_html=True)
 
-with col4:
+with col2:
     st.markdown(f"""
     <div class='stat-card'>
         <div style='font-size: 32px; font-weight: bold; color: #8b5cf6;'>{stats['remote_jobs']:,}</div>
@@ -174,7 +158,7 @@ with col4:
     </div>
     """, unsafe_allow_html=True)
 
-with col5:
+with col3:
     avg_sal = int(stats['avg_salary']/1000) if stats['avg_salary'] else 0
     st.markdown(f"""
     <div class='stat-card'>

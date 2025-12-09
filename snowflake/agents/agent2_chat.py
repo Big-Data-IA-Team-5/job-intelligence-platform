@@ -37,16 +37,28 @@ class JobIntelligenceAgent:
         try:
             # Build chat history context for follow-up questions
             history_section = ""
+            previous_location = None
             if chat_history and len(chat_history) > 0:
                 history_section = "\n**Previous Conversation:**\n"
                 for msg in chat_history[-3:]:  # Last 3 messages for context
                     history_section += f"User: {msg.get('user', '')}\n"
-                    history_section += f"Assistant: {msg.get('assistant', '')[:200]}...\n\n"
+                    history_section += f"Assistant: {msg.get('assistant', '')[:200]}...\n"
+                    
+                    # Extract previous location for "more" detection
+                    if 'location' in msg.get('user', '').lower() or 'in ' in msg.get('user', ''):
+                        # Try to extract location from previous query
+                        user_text = msg.get('user', '')
+                        if ' in ' in user_text.lower():
+                            potential_location = user_text.lower().split(' in ')[-1].split()[0]
+                            previous_location = potential_location.capitalize()
+                
+                history_section += f"\n**Previous search location:** {previous_location or 'Not specified'}\n\n"
                 history_section += """**IMPORTANT - Use conversation history to:**
 1. Resolve pronouns: "this company" → refer to company mentioned earlier
 2. Infer missing entities: "whom to contact" → use company from previous query  
 3. Understand follow-ups: "attorney" → if previous was about company X, find attorney for company X
 4. Track context: if user asked about Dassault, next queries likely about Dassault
+5. **DETECT "MORE" REQUESTS:** If user says "give me more", "show more", "find more" and previous had location → SET LOCATION TO NULL to expand search
 
 """
             
@@ -143,6 +155,12 @@ Return a JSON object with:
 - company: company name if mentioned (single company) OR array of companies for comparison (e.g., ["Amazon", "Google"])
 - keywords: important search terms from the question
 - resume_skills: if resume provided, extract key technical skills (e.g., ["Python", "AWS", "Docker"])
+l
+**Context-Aware Intelligence:**
+- If user has resume: extract technical skills and use them for matching (set job_title: null to search broadly)
+- If user says "more jobs": expand the previous search (remove location if it was too restrictive, keep skills)
+- If user references "this company" or "these companies": look at conversation history to identify them
+- If asking about follow-up: infer missing context from previous messages
 
 **Examples:**
 "looking for data related internship" → {{"intent": "job_search", "job_title": "Data Intern", "location": null, "company": null, "keywords": ["data", "internship"]}}
@@ -153,7 +171,10 @@ Return a JSON object with:
 "top attorney in Massachusetts" → {{"intent": "contact_info", "job_title": null, "location": "Massachusetts", "company": null, "keywords": ["attorney", "contact"]}}
 "compare Amazon and Microsoft" → {{"intent": "company_comparison", "job_title": null, "location": null, "company": ["Amazon", "Microsoft"], "keywords": ["compare"]}}
 "analyze my resume" → {{"intent": "resume_analysis", "job_title": null, "location": null, "company": null, "keywords": ["resume", "analyze"]}}
-"what jobs match my resume" → {{"intent": "job_search", "job_title": "from_resume", "location": "from_resume", "company": null, "keywords": ["match", "resume"], "resume_skills": ["skill1", "skill2"]}}
+"jobs related to my resume" → {{"intent": "job_search", "job_title": null, "location": null, "company": null, "keywords": ["resume"], "resume_skills": ["Python", "Testing", "SQL"]}}
+"jobs matching my resume in Boston" → {{"intent": "job_search", "job_title": null, "location": "Boston", "company": null, "keywords": ["resume"], "resume_skills": ["Java", "AWS", "Docker"]}}
+"give me more jobs" → {{"intent": "job_search", "job_title": null, "location": null, "company": null, "keywords": ["more"]}}
+"show me H-1B data for Amazon" → {{"intent": "h1b_sponsorship", "job_title": null, "location": null, "company": "Amazon", "keywords": ["h1b", "data"]}}
 "give me career advice" → {{"intent": "career_advice", "job_title": null, "location": null, "company": null, "keywords": ["career", "advice"]}}
 
 **Question to analyze:** "{question}"
@@ -197,129 +218,153 @@ Respond ONLY with the JSON object, no other text."""
         finally:
             cursor.close()
     
-    def ask(self, question: str, resume_context: str = None, chat_history: list = None) -> Dict:
+    def ask(self, question: str, resume_context: str = None, chat_history: list = None, return_debug: bool = True) -> Dict:
         """
-        Answer questions using LLM-powered SQL generation with resume awareness and conversation context.
+        Answer questions using intelligent LLM-powered SQL generation.
         
-        Supports ANY question about:
-        - Job search, salary info, H-1B sponsorship, company comparisons, resume analysis, career advice
+        NO HARDCODED ROUTING - LLM decides everything based on:
+        - User's natural language query
+        - Available database schema (H1B_RAW: 97 fields, JOBS_PROCESSED: 22+ fields)
+        - Resume context and conversation history
+        
+        Supports ANY question about the data we have!
         
         Args:
             question: User's natural language query
             resume_context: User's resume text for personalization
-            chat_history: Previous conversation for context (list of {"user": "...", "assistant": "..."})
+            chat_history: Previous conversation for context
+            return_debug: If True, includes debug metadata for frontend display
         """
+        import time
+        start_time = time.time()
+        
+        # Guardrail 1: Empty or very short queries
+        if not question or len(question.strip()) < 3:
+            return {
+                "answer": "### ❓ I didn't catch that\n\nCould you please ask a more specific question? For example:\n- 'Find software engineer jobs in Boston'\n- 'Show me H-1B data for Google'\n- 'Compare salaries between California and New York'\n- 'Give me jobs related to my resume'",
+                "data": [],
+                "confidence": 0.0
+            }
+        
+        # Guardrail 2: Detect gibberish or random characters
+        if len(question.strip()) > 5:
+            words = question.split()
+            # Check if most "words" are very short or have no vowels (likely gibberish)
+            suspicious_words = sum(1 for w in words if len(w) > 3 and not any(v in w.lower() for v in 'aeiou'))
+            if suspicious_words > len(words) * 0.6:  # More than 60% suspicious
+                return {
+                    "answer": "### 🤔 I didn't understand that\n\nCould you rephrase your question? I can help you with:\n- **Job searches:** 'Find data analyst jobs in Seattle'\n- **H-1B info:** 'Which companies sponsor H-1B visas?'\n- **Salary data:** 'What's the average salary for engineers?'\n- **Resume matching:** 'Show me jobs related to my resume'",
+                    "data": [],
+                    "confidence": 0.0
+                }
+        
+        # Initialize debug metadata
+        debug_info = {
+            "question": question,
+            "has_resume_context": bool(resume_context),
+            "has_chat_history": bool(chat_history),
+            "steps": []
+        }
+        
         logger.info(f"❓ Question: {question}")
         if resume_context:
             logger.info(f"📄 Resume context provided ({len(resume_context)} chars)")
         if chat_history:
             logger.info(f"💬 Chat history provided ({len(chat_history)} messages)")
         
-        # Use LLM to understand intent and extract entities (with resume context and chat history)
-        intent_analysis = self._analyze_intent_with_llm(question, resume_context, chat_history)
+        # Step 1: LLM analyzes query and decides what to do
+        debug_info["steps"].append({"step": "Intent Analysis", "status": "running"})
+        try:
+            intent_analysis = self._analyze_intent_with_llm(question, resume_context, chat_history)
+            logger.info(f"🧠 LLM Analysis: {intent_analysis}")
+            debug_info["intent_analysis"] = intent_analysis
+            debug_info["steps"][-1]["status"] = "complete"
+            debug_info["steps"][-1]["result"] = intent_analysis
+        except Exception as e:
+            logger.error(f"❌ Intent analysis failed: {e}")
+            debug_info["steps"][-1]["status"] = "error"
+            debug_info["steps"][-1]["error"] = str(e)
+            return {
+                "answer": "### ⚠️ Sorry, I had trouble understanding your question\n\nPlease try rephrasing, or ask something like:\n- 'Find software engineer jobs in Boston'\n- 'Show me companies that sponsor H-1B'\n- 'What's the average salary for data analysts?'",
+                "data": [],
+                "confidence": 0.0,
+                "debug_info": debug_info if return_debug else None
+            }
         
-        logger.info(f"🧠 LLM Analysis: {intent_analysis}")
-        
-        # Extract entities (fallback to regex if LLM doesn't provide)
-        # Use None instead of empty string for missing values
-        company = intent_analysis.get('company') or self._extract_company(question) or None
-        job_title = intent_analysis.get('job_title') or self._extract_job_title(question) or None
-        location = intent_analysis.get('location') or self._extract_location(question) or None
         intent = intent_analysis.get('intent', 'general')
         
-        # Clean up empty strings to None
-        if company == '': company = None
-        if job_title == '': job_title = None
-        if location == '': location = None
+        # Guardrail 3: Check if intent was successfully detected
+        if not intent or intent == 'unknown':
+            return {
+                "answer": "### 🤔 I'm not sure what you're asking for\n\nI can help you with:\n- **Job Search:** 'Find ML engineer jobs in California'\n- **H-1B Data:** 'Show H-1B sponsors for tech companies'\n- **Salary Info:** 'Compare salaries between states'\n- **Resume Match:** 'Find jobs matching my resume'\n\nPlease try asking your question differently!",
+                "data": [],
+                "confidence": 0.3,
+                "debug_info": debug_info if return_debug else None
+            }
         
-        logger.info(f"📊 Extracted - Intent: {intent}, Job: {job_title}, Location: {location}, Company: {company}")
-        
-        # Route based on LLM-detected intent
+        # Step 2: Route ONLY for special cases that need external tools
         if intent == 'resume_analysis':
-            return self._analyze_resume(question, resume_context)
+            # Guardrail 4: Resume analysis requires resume
+            if not resume_context:
+                return {
+                    "answer": "### 📄 No Resume Found\n\nI'd love to analyze your resume, but I don't see one uploaded yet!\n\n**Please upload your resume using the '📎 Upload Resume' section above.**\n\nOnce uploaded, I can provide:\n- Strengths and weaknesses analysis\n- Keyword optimization suggestions\n- Skills gap identification\n- Job market fit assessment",
+                    "data": [],
+                    "confidence": 0.0,
+                    "debug_info": debug_info if return_debug else None
+                }
+            debug_info["agent_used"] = "Agent 2 - Resume Analysis"
+            debug_info["steps"].append({"step": "Resume Analysis", "status": "complete"})
+            result = self._analyze_resume(question, resume_context)
         
         elif intent == 'career_advice':
-            return self._give_career_advice(question, resume_context, intent_analysis.get('resume_skills', []))
+            # Guardrail 5: Career advice requires resume
+            if not resume_context:
+                return {
+                    "answer": "### 📄 Resume Required for Career Advice\n\nTo provide personalized career guidance, please upload your resume first!\n\n**After uploading, I can help with:**\n- Career path recommendations\n- Skill gap analysis\n- Job market insights\n- Salary expectations\n\nUse the '📎 Upload Resume' section above to get started.",
+                    "data": [],
+                    "confidence": 0.0,
+                    "debug_info": debug_info if return_debug else None
+                }
+            debug_info["agent_used"] = "Agent 2 - Career Advisor"
+            debug_info["steps"].append({"step": "Career Advice Generation", "status": "complete"})
+            result = self._give_career_advice(question, resume_context, intent_analysis.get('resume_skills', []))
         
         elif intent == 'job_search':
-            # If resume provided, use skills for better matching
+            # Use Agent 1 for job search (it has better search logic)
+            debug_info["agent_used"] = "Agent 1 - Job Search"
+            debug_info["steps"].append({"step": "Delegating to Agent 1", "status": "complete"})
             resume_skills = intent_analysis.get('resume_skills', [])
-            return self._search_jobs(question, job_title, location, resume_skills, resume_context)
+            job_title = intent_analysis.get('job_title')
+            location = intent_analysis.get('location')
+            
+            # Extract company list from intent OR from chat history
+            company_list = intent_analysis.get('company', [])
+            if not company_list and chat_history:
+                # Look for company names in previous responses
+                company_list = self._extract_companies_from_history(chat_history)
+                logger.info(f"📜 Extracted {len(company_list)} companies from chat history: {company_list}")
+            
+            result = self._search_jobs(question, job_title, location, resume_skills, resume_context, company_list)
         
-        elif intent == 'salary_info':
-            return self._get_salary_info(job_title, location)
-        
-        elif intent == 'h1b_sponsorship':
-            return self._get_sponsorship_info(company)
-        
-        elif intent == 'contact_info':
-            logger.info(f"🔀 Routing to _get_contact_info with company={company}, location={location}")
-            return self._get_contact_info(company, location)
-        
-        elif intent == 'company_comparison':
-            # Check if LLM extracted companies as array
-            if isinstance(company, list):
-                companies = company
-            else:
-                # Fallback to extraction
-                companies = self._extract_multiple_companies(question)
-                if not companies and company:
-                    companies = [company]
-            return self._compare_companies(companies)
-        
-        # Smart fallback: Use keyword matching ONLY to redirect if LLM missed it
-        # Trust LLM for everything else but help with edge cases
+        # Step 3: For ALL other queries, let LLM generate SQL dynamically
         else:
-            q_lower = question.lower()
+            debug_info["agent_used"] = "Agent 2 - Intelligent SQL Generator"
+            logger.info(f"🤖 Using LLM to generate SQL for intent: {intent}")
+            result = self._llm_generate_and_execute_sql(question, intent_analysis, resume_context, chat_history)
             
-            # Visa-related job searches (OPT, CPT, H-1B jobs)
-            if any(visa in q_lower for visa in ['opt', 'cpt', 'f-1', 'h-1b jobs', 'h1b jobs', 'visa jobs', 'sponsor companies']):
-                logger.info(f"⚠️ LLM returned intent='{intent}' but query is visa job search - routing to job search")
-                return self._search_jobs(question, job_title, location)
-            
-            # Salary queries without enough context
-            if any(w in q_lower for w in ['salary', 'pay', 'compensation', 'wage']) and not job_title:
-                logger.info(f"⚠️ Salary query without job title - need more info")
-                return self._error_response("Please specify a job title (e.g., 'software engineer salary' or 'data analyst pay in Boston')")
-            
-            # H-1B/sponsorship queries without company
-            if any(w in q_lower for w in ['h-1b', 'h1b', 'sponsor', 'visa', 'approval rate']) and 'job' not in q_lower:
-                logger.info(f"⚠️ Sponsorship query - checking for company")
-                if not company:
-                    company = self._extract_company(question)
-                if company:
-                    return self._get_sponsorship_info(company)
-                else:
-                    return self._error_response("Please specify a company name (e.g., 'does Amazon sponsor H-1B?')")
-            
-            # If query has job-related keywords, assume job search (LLM fallback)
-            if any(w in q_lower for w in ['job', 'jobs', 'position', 'positions', 'opening', 'openings', 
-                                           'role', 'roles', 'work', 'career', 'hiring', 'internship', 
-                                           'intern', 'looking for', 'find', 'search', 'show me', 'list',
-                                           'engineer', 'developer', 'analyst', 'scientist', 'manager']):
-                logger.info(f"⚠️ LLM returned intent='{intent}' but query has job keywords - routing to job search")
-                return self._search_jobs(question, job_title, location)
-            
-            elif any(w in q_lower for w in ['salary', 'pay', 'wage', 'how much', 'compensation', 'earn']):
-                return self._get_salary_info(job_title, location)
-            
-            elif any(w in q_lower for w in ['sponsor', 'approval rate', 'h-1b', 'h1b', 'visa']):
-                return self._get_sponsorship_info(company)
-            
-            elif any(w in q_lower for w in ['contact', 'email', 'attorney', 'lawyer', 'law firm', 'who should i']):
-                return self._get_contact_info(company)
-            
-            elif any(w in q_lower for w in ['compare', 'vs', 'versus']):
-                companies = self._extract_multiple_companies(question)
-                return self._compare_companies(companies)
-            
-            else:
-                # Handle non-job-related questions with helpful guidance
-                return {
-                    "answer": "### 🤖 Job Intelligence AI\n\nI'm specialized in helping with **career and job search queries**. Here's what I can help you with:\n\n### 🔍 Job Search\n- Find jobs, internships, and openings\n- Filter by company, location, visa status\n- Match jobs to your resume skills\n\n### 💰 Salary Information\n- Average salaries by role and location\n- Salary ranges and negotiation advice\n- Prevailing wage information\n\n### 🌐 H-1B Visa Support\n- Companies that sponsor H-1B visas\n- Approval rates and sponsorship history\n- Contact information for immigration\n\n### 🏢 Company Analysis\n- Compare companies side-by-side\n- H-1B sponsorship profiles\n- Risk assessment and recommendations\n\n### 📄 Resume & Career\n- Analyze your resume\n- Get personalized career advice\n- Find jobs matching your skills\n\n---\n\n**💡 Try asking:**\n- \"Find software engineer jobs at Amazon\"\n- \"What's the salary for data analyst in Boston?\"\n- \"Compare Google vs Microsoft for H-1B\"\n- \"Analyze my resume\" (after uploading)\n\n*For general knowledge questions, please use a general-purpose AI.*",
-                    "data": [],
-                    "confidence": 0.3
-                }
+            # Add SQL generation details to debug info
+            if "sql_used" in result:
+                debug_info["sql_generated"] = result["sql_used"]
+                debug_info["steps"].append({"step": "SQL Generation", "status": "complete", "sql": result["sql_used"]})
+        
+        # Add timing and debug info to result
+        execution_time = time.time() - start_time
+        debug_info["execution_time_ms"] = int(execution_time * 1000)
+        
+        if return_debug:
+            result["debug_info"] = debug_info
+        
+        return result
     
     def _normalize_location_to_state(self, location: str) -> str:
         """Convert location names to state codes for H-1B database queries."""
@@ -803,7 +848,38 @@ Respond ONLY with the JSON object, no other text."""
         finally:
             cursor.close()
     
-    def _search_jobs(self, question: str, job_title: str, location: str, resume_skills: List[str] = None, resume_context: str = None) -> Dict:
+    def _extract_companies_from_history(self, chat_history: List[Dict]) -> List[str]:
+        """Extract company names from previous chat responses."""
+        companies = []
+        import re
+        
+        # Look at last 3 messages for company mentions
+        for msg in chat_history[-3:]:
+            assistant_msg = msg.get('assistant', '')
+            
+            # Pattern 1: Companies in bullet lists or numbered lists
+            company_matches = re.findall(r'^[\d\-\*]+\s*(.+?)(?:,|\n|$)', assistant_msg, re.MULTILINE)
+            for match in company_matches:
+                # Clean up company name
+                clean_name = match.strip().replace('**', '').replace('Inc.', '').replace('LLC', '').replace('d/b/a', '').strip()
+                if len(clean_name) > 3 and len(clean_name) < 80:  # Reasonable company name length
+                    companies.append(clean_name)
+            
+            # Pattern 2: "at COMPANY" or "by COMPANY"
+            at_matches = re.findall(r'\bat\s+([A-Z][a-zA-Z\s&,\.]+?)(?:\s+in|\s+for|\n|\||$)', assistant_msg)
+            companies.extend([c.strip() for c in at_matches if len(c.strip()) > 3])
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_companies = []
+        for c in companies:
+            if c.lower() not in seen:
+                seen.add(c.lower())
+                unique_companies.append(c)
+        
+        return unique_companies[:10]  # Return top 10
+    
+    def _search_jobs(self, question: str, job_title: str, location: str, resume_skills: List[str] = None, resume_context: str = None, company_list: List[str] = None) -> Dict:
         """Search jobs using Agent 1."""
         try:
             import sys
@@ -815,22 +891,80 @@ Respond ONLY with the JSON object, no other text."""
             
             from snowflake.agents.agent1_search import JobSearchAgent
             
-            # Enhance question with resume skills if provided
+            # Enhance question with resume skills and company list if provided
             enhanced_question = question
+            filters = {}
+            
             if resume_skills:
                 logger.info(f"🎯 Matching jobs with resume skills: {', '.join(resume_skills[:5])}")
                 enhanced_question = f"{question} with skills: {', '.join(resume_skills[:5])}"
+                filters['resume_skills'] = resume_skills  # Pass to Agent 1 for scoring
+            
+            if company_list:
+                logger.info(f"🏢 Filtering by companies from context: {', '.join(company_list[:5])}")
+                filters['companies'] = company_list
             
             agent1 = JobSearchAgent()
-            result = agent1.search(enhanced_question)
+            result = agent1.search(enhanced_question, filters=filters)
+            
+            # If no jobs found and resume provided, try progressively broader searches
+            if result['status'] == 'success' and not result['jobs'] and resume_skills:
+                location = intent_analysis.get('location')
+                
+                # Step 1: Try broader job categories with same location
+                logger.info("🔍 No jobs found, using LLM to find related job categories...")
+                broader_titles = self._get_related_job_titles_from_resume(resume_context or '', resume_skills)
+                
+                if broader_titles:
+                    logger.info(f"🎯 Trying broader job titles: {broader_titles}")
+                    broader_query = f"{broader_titles} in {location}" if location else broader_titles
+                    result = agent1.search(broader_query, filters=filters)
+                    logger.info(f"📊 Broader job titles found {len(result.get('jobs', []))} jobs")
+                
+                # Step 2: If still no results and location was specified, try nationwide
+                if not result.get('jobs') and location:
+                    logger.info(f"🌎 Still no jobs in {location}, expanding search nationwide...")
+                    nationwide_query = broader_titles if broader_titles else question.replace(f"in {location}", "").replace(location, "")
+                    result = agent1.search(nationwide_query, filters=filters)
+                    logger.info(f"📊 Nationwide search found {len(result.get('jobs', []))} jobs")
+                    
+                    if result.get('jobs'):
+                        # Add note that we expanded the search
+                        result['expanded_search'] = True
+                        result['original_location'] = location
+            
             agent1.close()
             
             if result['status'] == 'success' and result['jobs']:
-                # Return up to 10 jobs instead of 5
-                jobs = result['jobs'][:10]
+                # Filter out low-relevance jobs when resume is provided
+                jobs = result['jobs']
+                if resume_skills and jobs:
+                    # Calculate skill match for each job
+                    filtered_jobs = []
+                    for job in jobs:
+                        match_score = self._calculate_resume_match(job, resume_skills)
+                        if match_score >= 30:  # Minimum 30% relevance
+                            job['MATCH_SCORE'] = match_score
+                            filtered_jobs.append(job)
+                    
+                    if filtered_jobs:
+                        jobs = filtered_jobs
+                        logger.info(f"✅ Filtered to {len(jobs)} relevant jobs (removed {len(result['jobs']) - len(jobs)} low-relevance matches)")
+                    else:
+                        logger.warning(f"⚠️ All jobs filtered out (low relevance), showing top 10 anyway")
+                        jobs = result['jobs'][:10]
+                
+                # Return up to 10 jobs
+                jobs = jobs[:10]
                 total_available = result.get('total', len(jobs))
                 
-                answer = f"### 🎯 Found {total_available} jobs (showing {len(jobs)})\n\n"
+                # Add header with expansion note if search was broadened
+                if result.get('expanded_search'):
+                    original_loc = result.get('original_location', 'your location')
+                    answer = f"### 🌎 No jobs found in {original_loc}, showing {len(jobs)} jobs nationwide\n\n"
+                    answer += "_💡 Tip: Specific locations may have limited openings. Consider remote roles or relocation._\n\n"
+                else:
+                    answer = f"### 🎯 Found {total_available} jobs (showing {len(jobs)})\n\n"
                 
                 for i, job in enumerate(jobs, 1):
                     # Title with bold formatting
@@ -893,11 +1027,86 @@ Respond ONLY with the JSON object, no other text."""
                     "confidence": 0.9
                 }
             else:
-                return self._error_response("No jobs found. Try different search terms.")
+                # Guardrail 4: Provide helpful suggestions when no jobs found
+                suggestions = []
+                if location:
+                    suggestions.append(f"Try searching nationwide (without '{location}')")
+                if job_title:
+                    suggestions.append(f"Try broader job categories (not just '{job_title}')")
+                if not resume_context:
+                    suggestions.append("Upload your resume for personalized matches")
+                
+                suggestion_text = "\n".join([f"- {s}" for s in suggestions]) if suggestions else "- Try different search terms\n- Upload your resume for better matches\n- Search for broader job categories"
+                
+                return {
+                    "answer": f"### ❌ No jobs found\n\n**Suggestions:**\n{suggestion_text}",
+                    "data": [],
+                    "confidence": 0.2
+                }
                 
         except Exception as e:
             logger.error(f"Job search error: {e}")
             return self._error_response(str(e))
+    
+    def _get_related_job_titles_from_resume(self, resume_text: str, resume_skills: List[str]) -> str:
+        """Use LLM to analyze resume and suggest broader job categories for searching."""
+        cursor = self.conn.cursor()
+        
+        try:
+            skills_str = ', '.join(resume_skills[:10])
+            prompt = f"""You are a career advisor analyzing a resume to suggest relevant job search terms.
+
+**Resume Skills:** {skills_str}
+**Resume Context:** {resume_text[:500]}
+
+Based on these skills and experience, suggest 3-5 BROAD job categories that would match this candidate's profile. 
+Use general terms that appear in job titles, not specific niche roles.
+
+Examples:
+- QA skills → "Quality Assurance OR Test Engineer OR Software Engineer OR Automation Engineer"
+- Data skills → "Data Analyst OR Data Scientist OR Business Analyst OR Data Engineer"
+- CAD/Design skills → "Design Engineer OR Product Engineer OR Mechanical Engineer OR Application Engineer"
+
+Return ONLY the job title search terms connected with OR, no explanations."""
+
+            sql = f"""
+            SELECT SNOWFLAKE.CORTEX.COMPLETE(
+                'mistral-large2',
+                '{prompt.replace("'", "''")}'
+            ) as suggested_titles
+            """
+            
+            cursor.execute(sql)
+            result = cursor.fetchone()
+            
+            if result and result[0]:
+                suggested = result[0].strip()
+                logger.info(f"✅ LLM suggested job categories: {suggested}")
+                return suggested
+            
+        except Exception as e:
+            logger.error(f"❌ LLM job category suggestion failed: {e}")
+        finally:
+            cursor.close()
+        
+        return None
+    
+    def _calculate_resume_match(self, job: Dict, resume_skills: List[str]) -> int:
+        """Calculate % match between resume skills and job requirements."""
+        if not resume_skills:
+            return 100  # No resume = show all jobs
+        
+        job_text = f"{job.get('TITLE', '')} {job.get('DESCRIPTION', '')} {job.get('QUALIFICATIONS', '')}".lower()
+        
+        # Count how many resume skills appear in job
+        matched_skills = 0
+        for skill in resume_skills:
+            if skill.lower() in job_text:
+                matched_skills += 1
+        
+        # Calculate percentage
+        match_percent = int((matched_skills / len(resume_skills)) * 100) if resume_skills else 0
+        return match_percent
     
     def _extract_company(self, text: str) -> str:
         """Extract company name."""
@@ -1074,13 +1283,261 @@ Be encouraging and specific."""
             logger.error(f"Career advice error: {e}")
             return self._error_response(str(e))
     
+    def _llm_generate_and_execute_sql(self, question: str, intent_analysis: Dict, resume_context: str = None, chat_history: list = None) -> Dict:
+        """
+        🤖 INTELLIGENT SQL GENERATION - No hardcoded logic!
+        
+        LLM generates SQL query based on:
+        1. User's question
+        2. Full database schema (H1B_RAW: 97 fields, JOBS_PROCESSED: 22 fields)
+        3. Intent analysis
+        4. Resume context and chat history
+        
+        This handles ANY query about our data!
+        """
+        cursor = self.conn.cursor()
+        
+        try:
+            # Build context sections
+            history_section = ""
+            if chat_history and len(chat_history) > 0:
+                history_section = "\n**Previous Conversation:**\n"
+                for msg in chat_history[-2:]:
+                    history_section += f"User: {msg.get('user', '')}\nAssistant: {msg.get('assistant', '')[:150]}...\n\n"
+            
+            resume_section = ""
+            if resume_context:
+                resume_section = f"\n**User's Resume Skills:** {resume_context[:500]}"
+            
+            # LLM generates SQL + formats answer
+            prompt = f"""You are an expert SQL analyst with access to H-1B visa and job posting data. Generate a SQL query to answer the user's question.
+
+**USER'S QUESTION:** {question}
+
+**INTENT ANALYSIS:**
+{json.dumps(intent_analysis, indent=2)}
+{history_section}
+{resume_section}
+
+**AVAILABLE DATABASE SCHEMA:**
+
+1. **RAW.H1B_RAW** (479,005 rows) - Complete H-1B visa data with 97 columns:
+   
+   **CASE INFO (4 cols):** case_number, case_status (Certified/Denied/Withdrawn), received_date (DATE), decision_date (DATE)
+   
+   **EMPLOYER (27 cols):** employer_name, employer_city, employer_state (2-letter: CA/NY/TX), employer_postal_code, employer_phone, employer_phone_ext, employer_fein, employer_poc_first_name, employer_poc_last_name, employer_poc_email, employer_poc_phone, employer_poc_job_title, employer_address1, employer_address2, employer_country, change_employer, agent_representing_employer
+   
+   **JOB (5 cols):** job_title, soc_code, soc_title, full_time_position (Y/N), total_worker_positions
+   
+   **WORKSITE (8 cols):** worksite_city, worksite_state (2-letter: CA/NY/TX), worksite_county, worksite_postal_code, worksite_address1, worksite_address2, worksite_workers, total_worksite_locations
+   
+   **WAGE (6 cols):** wage_rate_of_pay_from (DECIMAL), wage_rate_of_pay_to (DECIMAL), wage_unit_of_pay (Year/Hour/Week), prevailing_wage (DECIMAL), pw_unit_of_pay, pw_wage_level
+   
+   **ATTORNEY/AGENT (14 cols):** agent_attorney_first_name, agent_attorney_last_name, agent_attorney_middle_name, agent_attorney_email_address, agent_attorney_phone, agent_attorney_phone_ext, agent_attorney_city, agent_attorney_state (2-letter: CA/NY/TX), agent_attorney_postal_code, agent_attorney_address1, agent_attorney_address2, agent_attorney_country, lawfirm_name_business_name
+   
+   **OTHER (33 cols):** visa_class, begin_date, end_date, new_employment, continued_employment, change_previous_employment, new_concurrent_employment, amended_petition, trade_name_dba, naics_code, h_1b_dependent, willful_violator, support_h1b, statutory_basis, original_cert_date, preparer_first_name, preparer_last_name, preparer_email, preparer_business_name, pw_tracking_number, pw_oes_year, state_of_highest_court, name_of_highest_state_court, secondary_entity, secondary_entity_business_name, pw_other_source, pw_other_year, pw_survey_publisher, pw_survey_name, agree_to_lc_statement, appendix_a_attached, public_disclosure, loaded_at
+
+2. **PROCESSED.JOBS_PROCESSED** (37,891 rows) - Enhanced job postings with 38 columns:
+   
+   **BASIC (10 cols):** job_id, url, title, company, company_clean, location, description, description_embedding, source, company_size
+   
+   **EMPLOYMENT (7 cols):** job_type, salary_min, salary_max, salary_text, work_model (Remote/Hybrid/On-site), department, qualifications
+   
+   **H1B/VISA (13 cols):** h1b_sponsor (BOOLEAN), h1b_employer_name, h1b_city, h1b_state, visa_category, h1b_sponsored_explicit, h1b_approval_rate, h1b_total_petitions, total_petitions, avg_approval_rate, sponsorship_score, h1b_risk_level, h1b_avg_wage
+   
+   **CLASSIFICATION (4 cols):** snippet, classification_confidence, is_new_grad_role (BOOLEAN), job_category
+   
+   **DATES (2 cols):** posted_date (DATE), days_since_posted
+
+3. **PROCESSED.EMPLOYER_INTELLIGENCE** - Company H-1B profiles:
+   - employer_original, employer_clean, sponsorship_score, approval_rate, total_filings, total_certified, total_denied, filings_6mo, avg_wage_offered, is_violator, risk_level
+
+**CRITICAL NOTES:**
+- All state columns use 2-letter postal codes (CA not California, NY not New York)
+- Use EXACT column names as listed above
+- Join H1B_RAW with JOBS_PROCESSED on: h1b_employer_name = employer_name (use ILIKE)
+- Join EMPLOYER_INTELLIGENCE with others on: employer_clean (use ILIKE)
+
+**YOUR TASK:**
+1. Write a SQL query to answer the question (use Snowflake SQL syntax)
+2. Return results in a structured format
+3. If question can't be answered with available data, explain why
+
+**RULES:**
+- Use ILIKE for case-insensitive string matching
+- Join tables when needed (e.g., JOBS_PROCESSED with H1B_RAW on employer name)
+- Calculate approval rate as: total_certified / total_filings * 100
+- Format phone numbers if present
+- Limit results to 10-20 rows max
+- Use proper aggregations (AVG, COUNT, SUM) for statistics
+
+**OUTPUT FORMAT:**
+Return a JSON object with:
+{{
+  "sql": "SELECT ... FROM ... WHERE ...",
+  "explanation": "Brief explanation of what the query does",
+  "can_answer": true/false
+}}
+
+**CRITICAL SQL FORMATTING RULES:**
+- Write SQL as a SINGLE LINE with spaces (no line breaks, no backslash continuations)
+- Example: "sql": "SELECT col1, col2 FROM table WHERE condition LIMIT 10"
+- DO NOT use backslash (\) for line continuation - it breaks JSON parsing
+- Keep SQL readable but on one line
+
+If the question is outside the scope of available data, set can_answer=false and explain what data is missing.
+
+Generate the response now:"""
+
+            # Get LLM to generate SQL
+            sql_gen = f"""
+            SELECT SNOWFLAKE.CORTEX.COMPLETE(
+                'mistral-large2',
+                '{prompt.replace("'", "''")}'
+            ) as sql_response
+            """
+            
+            cursor.execute(sql_gen)
+            result = cursor.fetchone()
+            
+            if not result or not result[0]:
+                return self._error_response("Failed to generate SQL query")
+            
+            # Parse LLM response
+            response_text = result[0].strip()
+            logger.info(f"🤖 LLM SQL Generation: {response_text[:500]}")
+            
+            # Extract JSON
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            if not json_match:
+                return self._error_response("Failed to parse SQL generation response")
+            
+            sql_response = json.loads(json_match.group())
+            
+            # Check if question can be answered
+            if not sql_response.get('can_answer', True):
+                explanation = sql_response.get('explanation', 'Question cannot be answered with available data')
+                return {
+                    "answer": f"### ℹ️ Information Not Available\n\n{explanation}\n\n**Available Data:**\n- H-1B visa sponsorship records (479K cases)\n- Job postings with H-1B info (37K jobs)\n- Company sponsorship profiles\n\n**Try asking about:**\n- Job searches, salaries, H-1B sponsors, company comparisons",
+                    "data": [],
+                    "confidence": 0.5
+                }
+            
+            generated_sql = sql_response.get('sql', '')
+            explanation = sql_response.get('explanation', '')
+            
+            if not generated_sql:
+                return self._error_response("No SQL query generated")
+            
+            logger.info(f"📊 Executing generated SQL: {generated_sql[:300]}")
+            
+            # Execute the generated SQL
+            cursor.execute(generated_sql)
+            query_results = cursor.fetchall()
+            column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+            
+            if not query_results:
+                return {
+                    "answer": f"### 🔍 No Results Found\n\n{explanation}\n\nTry:\n- Different keywords\n- Broader location\n- Alternative company names",
+                    "data": [],
+                    "sql_used": generated_sql,
+                    "confidence": 0.6
+                }
+            
+            # Format results with LLM
+            data_sample = query_results[:5]  # First 5 rows for formatting
+            format_prompt = f"""Format these query results into a clear, professional answer for the user.
+
+**User's Question:** {question}
+
+**Query Explanation:** {explanation}
+
+**Results (showing {len(data_sample)} of {len(query_results)} rows):**
+Columns: {', '.join(column_names)}
+
+Data:
+{json.dumps([[str(v) for v in row] for row in data_sample], indent=2)}
+
+**Format the answer as:**
+1. **Clear title** with emoji
+2. **Key insights** from the data
+3. **Formatted table or list** of results
+4. **Actionable next steps** if relevant
+
+Use Markdown formatting. Be professional and helpful."""
+
+            format_sql = f"""
+            SELECT SNOWFLAKE.CORTEX.COMPLETE(
+                'mistral-large2',
+                '{format_prompt.replace("'", "''")}'
+            ) as formatted_answer
+            """
+            
+            cursor.execute(format_sql)
+            format_result = cursor.fetchone()
+            
+            formatted_answer = format_result[0] if format_result else explanation
+            
+            # Convert results to dict format
+            data_dicts = [dict(zip(column_names, row)) for row in query_results[:10]]
+            
+            return {
+                "answer": formatted_answer,
+                "data": data_dicts,
+                "sql_used": generated_sql,
+                "confidence": 0.85
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ LLM SQL generation error: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Guardrail 6: Better error messages for SQL failures
+            error_str = str(e)
+            if "invalid identifier" in error_str.lower():
+                column_name = error_str.split("'")[-2] if "'" in error_str else "column"
+                return {
+                    "answer": f"### ⚠️ Data Query Error\n\nI tried to query a field that doesn't exist in our database (`{column_name}`).\n\n**This usually means:**\n- The data you're looking for isn't available in our system\n- Try rephrasing your question\n- Ask about job postings, H-1B data, or company information instead",
+                    "data": [],
+                    "confidence": 0.1
+                }
+            elif "syntax error" in error_str.lower() or "sql compilation" in error_str.lower():
+                return {
+                    "answer": "### ⚠️ Query Error\n\nI had trouble understanding your request.\n\n**Please try:**\n- Rephrasing your question more clearly\n- Breaking it into simpler parts\n- Using specific examples (e.g., 'Show me Google's H-1B data')",
+                    "data": [],
+                    "confidence": 0.1
+                }
+            else:
+                return {
+                    "answer": f"### ❌ Something Went Wrong\n\nI encountered an error while processing your request.\n\n**Please try:**\n- Rephrasing your question\n- Being more specific about what you need\n- Asking about jobs, companies, H-1B data, or salaries\n\n**Error details:** {error_str[:200]}",
+                    "data": [],
+                    "confidence": 0.0
+                }
+        finally:
+            cursor.close()
+    
     def _error_response(self, message: str) -> Dict:
-        """Standard error response."""
-        return {
-            "answer": f"❌ {message}",
-            "data": [],
-            "confidence": 0.0
-        }
+        """Standard error response with helpful formatting."""
+        # Make error messages more user-friendly
+        if "No jobs found" in message or "no results" in message.lower():
+            return {
+                "answer": f"### 🔍 {message}\n\n**Try:**\n- Searching in different locations\n- Using broader job titles\n- Removing specific filters\n- Uploading your resume for better matches",
+                "data": [],
+                "confidence": 0.2
+            }
+        elif "specify" in message.lower() or "provide" in message.lower():
+            return {
+                "answer": f"### ❓ {message}\n\n**I can help if you tell me:**\n- A company name (e.g., 'Google', 'Amazon')\n- A location (e.g., 'Boston', 'California')\n- A job title (e.g., 'Software Engineer')",
+                "data": [],
+                "confidence": 0.0
+            }
+        else:
+            return {
+                "answer": f"### ⚠️ {message}",
+                "data": [],
+                "confidence": 0.0
+            }
     
     def close(self):
         if self.conn:

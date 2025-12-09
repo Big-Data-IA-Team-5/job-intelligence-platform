@@ -23,31 +23,45 @@ default_args = {
 def generate_embeddings(**context):
     """Generate embeddings for jobs missing from EMBEDDED_JOBS"""
     import sys
-    sys.path.insert(0, '/opt/airflow')
-    sys.path.insert(0, '/opt/airflow/scripts')
+    import os
     
-    from scripts.generate_embeddings import main
+    # Add paths for script imports
+    airflow_home = '/opt/airflow'
+    sys.path.insert(0, airflow_home)
+    sys.path.insert(0, os.path.join(airflow_home, 'scripts'))
     
-    print("=" * 80)
-    print("🚀 STARTING EMBEDDING GENERATION")
-    print("=" * 80)
+    print(f"🔍 Python path: {sys.path[:3]}")
+    print(f"🔍 Current directory: {os.getcwd()}")
+    print(f"🔍 Scripts directory exists: {os.path.exists(os.path.join(airflow_home, 'scripts'))}")
     
-    # Run the embedding generation
-    result = main()
-    
-    print("\n" + "=" * 80)
-    print("EMBEDDING GENERATION COMPLETED")
-    print("=" * 80)
-    print(f"\n📊 Result: {result}")
-    
-    return result
+    try:
+        from scripts.generate_embeddings import main
+        
+        print("=" * 80)
+        print("🚀 STARTING EMBEDDING GENERATION")
+        print("=" * 80)
+        
+        # Run the embedding generation
+        result = main()
+        
+        print("\n" + "=" * 80)
+        print("✅ EMBEDDING GENERATION COMPLETED")
+        print("=" * 80)
+        print(f"\n📊 Result: {result}")
+        
+        return result
+    except Exception as e:
+        print(f"❌ ERROR: {str(e)}")
+        print(f"📁 Available directories in {airflow_home}:")
+        print(os.listdir(airflow_home))
+        raise
 
 with DAG(
     'embedding_generator',
     default_args=default_args,
     description='Generate embeddings for new jobs automatically',
-    schedule_interval='0 */6 * * *',  # Every 6 hours
-    start_date=pendulum.datetime(2024, 1, 1, tz="UTC"),
+    schedule_interval='0 */6 * * *',  # Every 6 hours (EST)
+    start_date=pendulum.datetime(2024, 1, 1, tz="America/New_York"),
     catchup=False,
     tags=['embeddings', 'processing', 'automated'],
 ) as dag:

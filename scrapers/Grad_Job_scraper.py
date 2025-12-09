@@ -82,10 +82,15 @@ class AirtableJobScraper:
         chrome_options.add_argument('--disable-gpu')
         chrome_options.add_argument('--disable-software-rasterizer')
         chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('--blink-settings=imagesEnabled=false')
+        chrome_options.add_argument('--disable-images')
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_experimental_option("prefs", {
+            "profile.managed_default_content_settings.images": 2
+        })
         chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        chrome_options.page_load_strategy = 'normal'
+        chrome_options.page_load_strategy = 'eager'
         
         try:
             self.driver = webdriver.Chrome(options=chrome_options)
@@ -329,10 +334,15 @@ class AirtableJobScraper:
                     chrome_options.add_argument('--disable-gpu')
                     chrome_options.add_argument('--disable-software-rasterizer')
                     chrome_options.add_argument('--window-size=1920,1080')
+                    chrome_options.add_argument('--blink-settings=imagesEnabled=false')
+                    chrome_options.add_argument('--disable-images')
                     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
                     chrome_options.add_experimental_option('useAutomationExtension', False)
+                    chrome_options.add_experimental_option("prefs", {
+                        "profile.managed_default_content_settings.images": 2
+                    })
                     chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-                    chrome_options.page_load_strategy = 'normal'
+                    chrome_options.page_load_strategy = 'eager'
                     driver = webdriver.Chrome(options=chrome_options)
                     with self.lock:
                         logger.info("✓ Chrome driver initialized (headless) for worker")

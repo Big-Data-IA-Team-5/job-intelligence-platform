@@ -9,6 +9,7 @@ from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 from datetime import datetime, timedelta
+import pendulum
 import sys
 import os
 import json
@@ -53,10 +54,11 @@ def scrape_fortune500_jobs(**context):
     if not openai_key:
         raise ValueError("OpenAI API key not found in secrets.json")
     
-    # Initialize scraper
+    # Initialize scraper - DISABLE SELENIUM for parallel processing
+    # Selenium is NOT thread-safe and causes massive slowdowns with ThreadPoolExecutor
     scraper = UltraSmartScraper(
         openai_key=openai_key,
-        use_selenium=True
+        use_selenium=False  # HTTP-only mode for 10x faster parallel scraping
     )
     
     # Initialize progress manager
@@ -92,7 +94,7 @@ def scrape_fortune500_jobs(**context):
     print(f"\n⚙️  Configuration:")
     print(f"   Total companies in CSV: {len(companies)}")
     print(f"   Companies to scrape: {len(companies_to_scrape)}")
-    print(f"   Max workers: 8")  # 8 workers for optimal performance
+    print(f"   Max workers: 16")  # 16 workers for FAST scraping of 500 companies!
     print(f"   Time window: Last 15 days")
     
     all_jobs = []
@@ -114,7 +116,7 @@ def scrape_fortune500_jobs(**context):
             # Collect results
             for future in futures:
                 try:
-                    result = future.result(timeout=3600)  # 1 hour timeout per company
+                    result = future.result(timeout=300)  # 5 min timeout per company (HTTP-only is fast)
                     if result['success'] and result['jobs']:
                         all_jobs.extend(result['jobs'])
                         progress.save_progress(result['company'])
@@ -218,7 +220,7 @@ with DAG(
     default_args=default_args,
     description='Fortune 500 scraper pipeline: Scrape -> S3 -> Snowflake',
     schedule_interval='0 6 * * *',  # Run daily at 6:00 AM UTC
-    start_date=datetime(2025, 12, 5, 2, 0),  # Start today at 2 AM
+    start_date=pendulum.datetime(2025, 12, 5, 2, 0, tz="America/New_York"),  # Start at 2 AM EST
     catchup=False,
     tags=['scraper', 'fortune500', 'companies', 'weekly', 'pipeline'],
 ) as dag:

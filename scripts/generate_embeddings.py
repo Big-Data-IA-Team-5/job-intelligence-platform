@@ -10,8 +10,21 @@ import sys
 def generate_embeddings():
     """Generate embeddings for all jobs in JOBS_RAW that don't have them yet"""
     
-    # Load secrets
-    secrets_path = Path(__file__).parent.parent / 'secrets.json'
+    # Load secrets - check multiple possible locations
+    possible_paths = [
+        Path('/opt/airflow/secrets/secrets.json'),  # Docker mount location
+        Path(__file__).parent.parent / 'secrets.json',  # Local development
+    ]
+    
+    secrets_path = None
+    for path in possible_paths:
+        if path.exists():
+            secrets_path = path
+            break
+    
+    if not secrets_path:
+        raise FileNotFoundError(f"Could not find secrets.json in any of: {possible_paths}")
+    
     with open(secrets_path, 'r') as f:
         secrets = json.load(f)
     
@@ -49,16 +62,18 @@ def generate_embeddings():
             return None
         
         # Step 2: Get jobs that need to be added to JOBS_PROCESSED
+        # Use EMBEDDED_JOBS (dbt deduplicated) as source of truth
         print("🔍 Finding jobs missing from JOBS_PROCESSED...")
         cursor.execute("""
-            SELECT j.job_id
-            FROM RAW.JOBS_RAW j
-            LEFT JOIN PROCESSED.JOBS_PROCESSED p ON j.job_id = p.job_id
+            SELECT DISTINCT e.job_id
+            FROM PROCESSED_PROCESSING.EMBEDDED_JOBS e
+            LEFT JOIN PROCESSED.JOBS_PROCESSED p ON e.job_id = p.job_id
             WHERE p.job_id IS NULL
+               OR e.scraped_at > p.scraped_at  -- Update if source is newer
             LIMIT 5000
         """)
         missing_job_ids = [row[0] for row in cursor.fetchall()]
-        print(f"   Found {len(missing_job_ids):,} jobs to process")
+        print(f"   Found {len(missing_job_ids):,} jobs to process (new or updated)")
         
         if not missing_job_ids:
             print("✅ No missing jobs!")
@@ -119,6 +134,14 @@ def generate_embeddings():
                 WHERE e.job_id IN ('{batch_ids}')
             ) e
             ON p.job_id = e.job_id
+            WHEN MATCHED AND e.scraped_at > p.scraped_at THEN UPDATE SET
+                title = e.title,
+                company = e.company,
+                location = e.location,
+                description = e.description,
+                scraped_at = e.scraped_at,
+                description_embedding = e.description_embedding,
+                processed_at = e.processed_at
             WHEN NOT MATCHED THEN INSERT (
                 JOB_ID, SOURCE, URL, TITLE, COMPANY, LOCATION, DESCRIPTION, 
                 SNIPPET, JOB_TYPE, POSTED_DATE, SCRAPED_AT,

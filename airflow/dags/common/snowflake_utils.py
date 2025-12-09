@@ -37,8 +37,11 @@ def format_value(value, max_length=None):
     elif isinstance(value, bool):
         return 'TRUE' if value else 'FALSE'
     else:
+        # Convert to string and check if empty
+        text = str(value).strip()
+        if not text or text == '':
+            return 'NULL'
         # Truncate if max_length specified
-        text = str(value)
         if max_length and len(text) > max_length:
             text = text[:max_length-3] + '...'
         # Escape single quotes for SQL (do NOT escape % - we're building literal SQL, not using placeholders)
