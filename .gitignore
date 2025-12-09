@@ -51,6 +51,7 @@ Thumbs.db
 # Airflow
 airflow/logs/
 airflow/plugins/__pycache__/
+airflow/scraped_jobs/
 airflow.db
 airflow.cfg
 
