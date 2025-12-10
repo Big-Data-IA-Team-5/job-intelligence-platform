@@ -60,8 +60,8 @@ with DAG(
     'embedding_generator',
     default_args=default_args,
     description='Generate embeddings for new jobs automatically',
-    schedule_interval='0 */6 * * *',  # Every 6 hours (EST)
-    start_date=pendulum.datetime(2024, 1, 1, tz="America/New_York"),
+    schedule_interval='0 12 * * *',  # Run daily at 7:00 AM EST after all scrapers (12:00 UTC)
+    start_date=pendulum.datetime(2024, 1, 1, 7, 0, tz="America/New_York"),
     catchup=False,
     tags=['embeddings', 'processing', 'automated'],
 ) as dag:

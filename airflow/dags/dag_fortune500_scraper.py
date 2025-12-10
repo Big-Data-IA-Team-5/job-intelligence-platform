@@ -219,8 +219,8 @@ with DAG(
     'fortune500_scraper',
     default_args=default_args,
     description='Fortune 500 scraper pipeline: Scrape -> S3 -> Snowflake',
-    schedule_interval='0 6 * * *',  # Run daily at 6:00 AM UTC
-    start_date=pendulum.datetime(2025, 12, 5, 2, 0, tz="America/New_York"),  # Start at 2 AM EST
+    schedule_interval='0 5 * * *',  # Run once daily at 12:00 AM EST (takes ~2 hours)
+    start_date=pendulum.datetime(2025, 12, 5, 0, 0, tz="America/New_York"),  # Start at 12 AM EST
     catchup=False,
     tags=['scraper', 'fortune500', 'companies', 'weekly', 'pipeline'],
 ) as dag:

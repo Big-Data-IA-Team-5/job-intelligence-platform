@@ -11,14 +11,12 @@ from datetime import datetime, timedelta
 import pendulum
 import sys
 import os
-import pandas as pd
-import json
 
 # Add parent directory to path for Docker
 sys.path.insert(0, '/opt/airflow')
 
 # Import only lightweight modules at top level
-# Heavy imports moved inside task functions to prevent DAG import timeout
+# Heavy imports (pandas, json, etc.) moved inside task functions to prevent DAG import timeout
 
 default_args = {
     'owner': 'airflow',

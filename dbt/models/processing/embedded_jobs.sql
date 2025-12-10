@@ -29,7 +29,7 @@ jobs AS (
 embedded AS (
     SELECT
         *,
-        -- Generate embedding for job description (VECTOR type - do not cast)
+        -- Generate embedding for job description (cast to VARIANT for dbt compatibility)
         SNOWFLAKE.CORTEX.EMBED_TEXT_768(
             'e5-base-v2',
             CONCAT(
@@ -37,13 +37,13 @@ embedded AS (
                 company, '. ',
                 LEFT(description, 2000)
             )
-        ) AS description_embedding,
+        )::VARIANT AS description_embedding,
         
-        -- Generate embedding for extracted skills (VECTOR type - do not cast)
+        -- Generate embedding for extracted skills (cast to VARIANT for dbt compatibility)
         SNOWFLAKE.CORTEX.EMBED_TEXT_768(
             'e5-base-v2',
             COALESCE(extracted_skills, title)
-        ) AS skills_embedding
+        )::VARIANT AS skills_embedding
         
     FROM jobs
 )

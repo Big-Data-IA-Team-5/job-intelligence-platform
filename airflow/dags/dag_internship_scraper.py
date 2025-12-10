@@ -164,8 +164,8 @@ with DAG(
     'internship_scraper',
     default_args=default_args,
     description='Internship scraper pipeline: Scrape -> S3 -> Snowflake',
-    schedule_interval='0 4 * * *',  # Run daily at 4:00 AM UTC
-    start_date=pendulum.datetime(2025, 12, 5, 2, 0, tz="America/New_York"),  # Start at 2 AM EST
+    schedule_interval='0 13,19,1 * * *',  # Run 3x daily: 8 AM, 2 PM, 8 PM EST (takes ~1 hour)
+    start_date=pendulum.datetime(2025, 12, 5, 8, 0, tz="America/New_York"),  # Start at 8 AM EST
     catchup=False,
     tags=['scraper', 'airtable', 'internships', 'intern-list', 'pipeline'],
 ) as dag:
