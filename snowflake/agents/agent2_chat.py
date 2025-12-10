@@ -1429,6 +1429,20 @@ Generate the response now:"""
             if not generated_sql:
                 return self._error_response("No SQL query generated")
             
+            # 🛡️ SECURITY GUARDRAIL: Block destructive SQL commands
+            sql_upper = generated_sql.upper().strip()
+            destructive_commands = ['DELETE', 'DROP', 'TRUNCATE', 'ALTER', 'CREATE', 'INSERT', 'UPDATE', 'GRANT', 'REVOKE']
+            
+            for cmd in destructive_commands:
+                if sql_upper.startswith(cmd) or f' {cmd} ' in sql_upper or f';{cmd}' in sql_upper:
+                    logger.error(f"🚨 SECURITY: Blocked destructive SQL command: {cmd}")
+                    return {
+                        "answer": f"### 🛡️ Security Protection Activated\n\n**I cannot execute queries that modify data.**\n\nI can only **read** data, not:\n- ❌ DELETE rows\n- ❌ DROP tables\n- ❌ TRUNCATE data\n- ❌ ALTER schemas\n- ❌ UPDATE records\n\n**Try asking:**\n- 'Show me jobs in Boston'\n- 'Which companies sponsor H-1B?'\n- 'Compare salaries between states'",
+                        "data": [],
+                        "confidence": 0.0,
+                        "security_blocked": True
+                    }
+            
             logger.info(f"📊 Executing generated SQL: {generated_sql[:300]}")
             
             # Execute the generated SQL

@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "job-intelligence-platform",
+  "private_key_id": "b5816b2d26ea4f32b8c0be6051dd223c6806f047",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC/MsAPgJy/THhZ\nrD0BGx9kFgYX8I3zNvRtHKVdSxJHzN14rBSBObb5OGt7pDms6CGAGEjBHt29TC9R\nn3CY1O7roe328PiWM7uaBoIINWXcu1U130q/5QugUOAMo1lSAyved5dKKCXS04UM\n0yxd4c9v0+HpAfSDIon9dJqHeHcEZ+LvV8szH/di6S3gnkozHCSqFZjo6q74jqDS\nqtJ7KPdsQ8fHNEK75hpXYSfoITg6Or8H40M/DUHSTMV4ofJv2GKhBhMBUMpardDz\ncjkM9nDdDreUp0QqZEkZgLPG4FUxYEg9LQE2itkj9BA6P1zFOj4xOd3YIjfAlOpp\nRZIDsAQxAgMBAAECggEALPORlBN4xsEDypFkBk6KIs3KwPYdaYESFlUVy8lKkvbn\nWueaKoeXLSDGpFsH9E7fEW6kLENFfqvatCX4IvZs9ZksiVI+H5IqGRxOlf93411n\nuzK0MEl5YkehZVdCOLXmKneTaivmOJriPRGo7KmaS4BVLKL5CZulNaGkcxUvZild\n8BVJqodGmKr/a6Yy6KvcQDkLT2AQc+7JMdIIoF5PJxvpvSd1Ud4ea+wW16XTaMSk\nTy6jE2x8xNtmQyFdHVR7RuoIIof+Gc1zcm3zZseMzfxVw5/XwrmI/wO/JWwhldyb\nYsC6wYf0Ud/Rek+Ye4tmcYfuUSKgUyvUSCFGSO49wQKBgQD05TiYV7dehKAKtP2O\nQwWom7/maRUl0/c0m2FjeFp9HanbKn+av3j3A3F6e7LXwtTKHXhZlnhtPrV73Ejl\n5jRm6qhDv3VUVKSygTkytA+rPAwLdEXZnrNnLFFtyLeeKpfuew4K7XLzeBCIGw4j\nQLXvm0JSALg8U1G+Q4KKrtAC6wKBgQDH3jSRw3e7KX2jdW/YIp36qLKMWE0qLFA5\n9oCNztpyxgsoAjwxAJ9gTaW6pzx7VtUf6uZ9KcjuVxxJXowV3RYmUpb66VTwAy9x\n66/BrtmvvQmFlLk3/oKyu0L5z7daN3Xrtn0b/yVbig8SuEvDCRq8sWAFtaMc02hE\nAcgbGYS2UwKBgGsL81QsK3xGTsq/WIIh68xK4HQwBM13PPyi2swnJK7CE6g4iHS1\nM4QN3kGi5ocHpAoBHcVTT6q5GY1dugO8P7Wo5wpOG1RUd3WLpNvz91FrOvyaw5mf\nlF4J8kIh1ZluluDoqze9mVyxY9CKuwBP3fcxj6jWpbHA3d9kFSDXzxcnAoGBAKdX\nBR6x0NJUd8ve7IjC2xBeJDfbSqgvt+//0jxo339PD1ItJOZGRipkeIjhsoL1/bUe\ngGJ1FLVxG87WKWW42O23Io/rwmC92gCAu4PneH1qQcmk7rrSDe3FWds8raAMZV+4\nR+Gj60xMODiNM2mVetxXijTdkjb1Tgv6jecao4HfAoGBAOHcy3LMDXcyC0lSF/+/\nqhpuC+ORfSjh6AN7uV1zDaEtXcrOpFoDxonfN3C0AEBcBWtYJvbBOVQ+3rjntO1o\nGzzu4s25zciqVuYvVkMgm6EJyx1EDDn7J9HcIKvGWTQIuqLYM2BIhEiQ7eVyBb8c\n5uT/Gpv01cHmeh+Hi9SbDjI8\n-----END PRIVATE KEY-----\n",
+  "client_email": "composer-airflow@job-intelligence-platform.iam.gserviceaccount.com",
+  "client_id": "103294646622075058170",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/composer-airflow%40job-intelligence-platform.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

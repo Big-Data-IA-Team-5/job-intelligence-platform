@@ -53,6 +53,15 @@ RUN useradd -m -u 1000 backend && \
 # Copy application code
 COPY --chown=backend:backend ./app ./app
 
+# Copy Snowflake agents (required for backend to run)
+COPY --chown=backend:backend ./snowflake ./snowflake
+
+# Copy config files (if they exist)
+COPY --chown=backend:backend ./config ./config
+
+# Copy secrets.json (will be overridden by env vars in Cloud Run)
+COPY --chown=backend:backend ./secrets.json ./secrets.json
+
 USER backend
 
 # Expose port

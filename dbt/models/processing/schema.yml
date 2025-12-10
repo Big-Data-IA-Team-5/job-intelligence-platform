@@ -1,0 +1,71 @@
+version: 2
+
+models:
+  - name: embedded_jobs
+    description: "Jobs with vector embeddings for semantic search using Snowflake Cortex"
+    columns:
+      - name: job_id
+        description: "Unique identifier for the job"
+        tests:
+          - unique
+          - not_null
+      
+      - name: title
+        description: "Job title"
+      
+      - name: company
+        description: "Company name"
+      
+      - name: location
+        description: "Job location"
+      
+      - name: description
+        description: "Full job description"
+      
+      - name: extracted_skills
+        description: "AI-extracted technical skills from job description"
+      
+      - name: job_category
+        description: "AI-classified job category (Engineering, Data, Product, etc.)"
+      
+      - name: seniority_level
+        description: "Detected seniority level (Junior, Mid-Level, Senior, Principal, Management)"
+      
+      - name: is_remote
+        description: "Whether the job is remote"
+      
+      - name: source
+        description: "Data source (fortune500, airtable_grad, internship)"
+      
+      - name: scraped_at
+        description: "Timestamp when job was scraped"
+      
+      - name: h1b_sponsor
+        description: "Whether company sponsors H1B visas"
+      
+      - name: h1b_employer_name
+        description: "Company name from H1B records"
+      
+      - name: h1b_city
+        description: "City from H1B records"
+      
+      - name: h1b_state
+        description: "State from H1B records"
+      
+      - name: total_petitions
+        description: "Total H1B petitions filed by company"
+      
+      - name: avg_approval_rate
+        description: "Average H1B approval rate"
+      
+      - name: description_embedding
+        description: "Vector embedding of job description (VECTOR type - 768 dimensions)"
+        data_type: ARRAY
+        # Note: dbt doesn't support VECTOR type natively, using ARRAY as placeholder
+        # Actual Snowflake type is VECTOR(FLOAT, 768)
+      
+      - name: skills_embedding
+        description: "Vector embedding of extracted skills (VECTOR type - 768 dimensions)"
+        data_type: ARRAY
+        # Note: dbt doesn't support VECTOR type natively, using ARRAY as placeholder
+        # Actual Snowflake type is VECTOR(FLOAT, 768)

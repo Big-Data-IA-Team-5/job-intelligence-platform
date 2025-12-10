@@ -27,7 +27,7 @@ h1b_aggregated AS (
     GROUP BY 1, 2
 ),
 
--- Match jobs to H-1B sponsors
+-- Match jobs to H-1B sponsors with deduplication
 matched AS (
     SELECT
         j.*,
@@ -39,12 +39,23 @@ matched AS (
         CASE 
             WHEN h.employer_name_clean IS NOT NULL THEN TRUE 
             ELSE FALSE 
-        END AS h1b_sponsor
+        END AS h1b_sponsor,
+        -- Priority: exact match > company contains h1b > h1b contains company
+        CASE
+            WHEN UPPER(TRIM(j.company)) = h.employer_name_clean THEN 1
+            WHEN UPPER(TRIM(j.company)) LIKE h.employer_name_clean || '%' THEN 2
+            WHEN h.employer_name_clean LIKE UPPER(TRIM(j.company)) || '%' THEN 3
+            ELSE 4
+        END AS match_priority
     FROM jobs j
     LEFT JOIN h1b_aggregated h
         ON UPPER(TRIM(j.company)) = h.employer_name_clean
         OR UPPER(TRIM(j.company)) LIKE h.employer_name_clean || '%'
         OR h.employer_name_clean LIKE UPPER(TRIM(j.company)) || '%'
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY j.job_id ORDER BY match_priority, h.total_petitions DESC) = 1
 )
 
-SELECT * FROM matched
+SELECT 
+    job_id, title, company, location, description, source, scraped_at,
+    h1b_employer_name, h1b_city, h1b_state, total_petitions, avg_approval_rate, h1b_sponsor
+FROM matched

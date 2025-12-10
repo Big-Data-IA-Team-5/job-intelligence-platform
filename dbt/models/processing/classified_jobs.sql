@@ -3,13 +3,18 @@
 
 {{
     config(
-        materialized='table',
-        schema='processing'
+        materialized='incremental',
+        unique_key='job_id',
+        schema='processing',
+        on_schema_change='append_new_columns'
     )
 }}
 
 WITH jobs AS (
     SELECT * FROM {{ ref('h1b_matched_jobs') }}
+    {% if is_incremental() %}
+    WHERE job_id NOT IN (SELECT job_id FROM {{ this }})
+    {% endif %}
 ),
 
 classified AS (
