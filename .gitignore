@@ -37,6 +37,15 @@ ENV/
 snowflake_config.yml
 !snowflake_config.template
 
+# Google Cloud credentials
+*.json
+!package.json
+!tsconfig.json
+
+# Airflow passwords and keys
+*password*.txt
+*_key*.json
+
 # IDE
 .vscode/
 .idea/
@@ -54,6 +63,13 @@ airflow/plugins/__pycache__/
 airflow/scraped_jobs/
 airflow.db
 airflow.cfg
+airflow/*.sh
+!airflow/verify_automation.py
+
+# Deployment scripts with credentials
+deploy-*.sh
+*-composer-*.sh
+switch-to-*.sh
 
 # DBT
 dbt/target/
