@@ -1318,7 +1318,8 @@ Respond ONLY with the JSON object, no other text."""
                 
                 return {
                     "answer": answer,
-                    "data": jobs,
+                    "jobs": jobs,  # Changed from 'data' to 'jobs' for consistency
+                    "data": jobs,   # Keep 'data' for backward compatibility
                     "sql_used": result.get('sql', ''),
                     "confidence": 0.9
                 }
