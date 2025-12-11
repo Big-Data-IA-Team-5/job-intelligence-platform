@@ -22,10 +22,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Store conversation context in memory (in production, use Redis/database)
-conversation_history = {}
-
-
 from pydantic import BaseModel
 from typing import Optional, List, Dict
 
@@ -65,19 +61,14 @@ async def ask_question(request: ChatRequest):
     if not request.question or len(request.question.strip()) < 3:
         raise HTTPException(400, "Question too short")
     
-    # Store conversation history AND resume context for user
-    if request.user_id not in conversation_history:
-        conversation_history[request.user_id] = []
-    
     logger.info(f"🔍 User {request.user_id} asked: '{request.question}'")
     
     if request.resume_text:
         logger.info(f"📄 Resume context provided ({len(request.resume_text)} chars)")
     
-    # Use chat_history from request if provided, otherwise use stored history
-    # Check if None specifically (not empty list), since [] is a valid empty history
-    chat_hist = request.chat_history if request.chat_history is not None else conversation_history.get(request.user_id, [])
-    logger.info(f"💬 Using chat history: {len(chat_hist)} messages (from {'request' if request.chat_history is not None else 'memory'})")
+    # Use chat_history from request (default to empty list if not provided)
+    chat_hist = request.chat_history if request.chat_history is not None else []
+    logger.info(f"💬 Using chat history: {len(chat_hist)} messages")
     
     agent = JobIntelligenceAgent()
     
@@ -89,25 +80,21 @@ async def ask_question(request: ChatRequest):
         result = agent.ask(request.question, resume_context=request.resume_text, chat_history=chat_hist, return_debug=True)
         
         # Store interaction for future context (merge with incoming history if provided)
+        # Build current conversation turn for client to store
         current_turn = {
             "user": request.question,
-            "assistant": result['answer'][:500],
-            "has_resume": bool(request.resume_text)  # Track if resume was present
+            "assistant": result['answer'],
+            "has_resume": bool(request.resume_text)
         }
         
-        # If chat_history was provided in request, use it as base and add current turn
-        if request.chat_history is not None:
-            conversation_history[request.user_id] = request.chat_history[-9:] + [current_turn]
-        else:
-            conversation_history[request.user_id].append(current_turn)
-            # Keep last 10 interactions
-            if len(conversation_history[request.user_id]) > 10:
-                conversation_history[request.user_id] = conversation_history[request.user_id][-10:]
+        # Return updated chat history for client to manage (keep last 10 turns)
+        updated_chat_history = (chat_hist[-9:] if chat_hist else []) + [current_turn]
         
-        # Return response with debug_info for AI intelligence display
+        # Return response with updated chat history for client
         response = {
             "question": request.question,
             "answer": result['answer'],
+            "chat_history": updated_chat_history,
             "data_points": len(result.get('data', [])),
             "confidence": result.get('confidence', 0.0),
             "sources": result.get('sources', [])
