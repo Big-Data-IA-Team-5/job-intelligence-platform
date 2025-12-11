@@ -95,7 +95,8 @@ async def ask_question(request: ChatRequest):
             "question": request.question,
             "answer": result['answer'],
             "chat_history": updated_chat_history,
-            "data_points": len(result.get('data', [])),
+            "jobs": result.get('jobs', []),  # Include jobs from Agent 2
+            "data_points": len(result.get('jobs', [])),  # Count jobs, not data
             "confidence": result.get('confidence', 0.0),
             "sources": result.get('sources', [])
         }
