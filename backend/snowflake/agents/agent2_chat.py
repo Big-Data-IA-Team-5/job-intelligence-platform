@@ -1,7 +1,7 @@
 """
 Agent 2: Job Intelligence Chat Agent (Production-Ready)
 Uses pre-written SQL templates + Cortex for formatting answers
-Enhanced with caching, telemetry, and conversation state management
+Enhanced with distributed caching, telemetry, and conversation state management
 """
 import snowflake.connector
 import os
@@ -19,6 +19,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 load_dotenv('config/.env')
+
+# Import distributed cache manager
+from snowflake.agents.cache_manager import get_cache
 
 
 class ConversationState:
@@ -105,7 +108,7 @@ class TelemetryTracker:
 
 
 class JobIntelligenceAgent:
-    """Production-ready chat agent with caching, telemetry, and state management."""
+    """Production-ready chat agent with distributed caching, telemetry, and state management."""
     
     def __init__(self):
         self.conn = snowflake.connector.connect(
@@ -116,17 +119,17 @@ class JobIntelligenceAgent:
             schema='processed',
             warehouse='compute_wh'
         )
-        # Conversation state per user session
+        # Conversation state per user session (in-memory, per container)
         self.conversation_states = {}  # {user_id: ConversationState}
         
-        # Telemetry tracker
+        # Telemetry tracker (in-memory, per container)
         self.telemetry = TelemetryTracker()
         
-        # LLM response cache (in-memory for now)
-        self.llm_cache = {}  # {question_hash: (analysis, timestamp)}
+        # Distributed cache manager (Redis + in-memory fallback)
+        self.cache = get_cache()
         self.cache_ttl = 300  # 5 minutes cache TTL
         
-        logger.info("✅ Agent 2 (Chat Intelligence) initialized with caching & telemetry")
+        logger.info("✅ Agent 2 (Chat Intelligence) initialized with distributed caching & telemetry")
     
     def _get_cache_key(self, question: str, resume_context: str = None, chat_history: list = None) -> str:
         """Generate cache key for LLM responses."""
@@ -140,28 +143,17 @@ class JobIntelligenceAgent:
         return hashlib.md5(cache_input.encode()).hexdigest()
     
     def _get_cached_analysis(self, cache_key: str) -> Optional[Dict]:
-        """Retrieve cached LLM analysis if still valid."""
-        if cache_key in self.llm_cache:
-            cached_data, timestamp = self.llm_cache[cache_key]
-            age = (datetime.now() - timestamp).total_seconds()
-            if age < self.cache_ttl:
-                logger.info(f"💾 Cache HIT (age: {int(age)}s)")
-                return cached_data
-            else:
-                # Expired, remove from cache
-                del self.llm_cache[cache_key]
-                logger.info(f"⏰ Cache EXPIRED (age: {int(age)}s)")
+        """Retrieve cached LLM analysis from distributed cache."""
+        cached_data = self.cache.get('llm_intent', cache_key)
+        if cached_data:
+            self.telemetry.cache_hits += 1
+            return cached_data
+        self.telemetry.cache_misses += 1
         return None
     
     def _cache_analysis(self, cache_key: str, analysis: Dict):
-        """Store LLM analysis in cache."""
-        self.llm_cache[cache_key] = (analysis, datetime.now())
-        # Limit cache size to 100 entries
-        if len(self.llm_cache) > 100:
-            # Remove oldest entry
-            oldest_key = min(self.llm_cache.keys(), key=lambda k: self.llm_cache[k][1])
-            del self.llm_cache[oldest_key]
-            logger.info(f"🧹 Cache cleaned (removed oldest entry)")
+        """Store LLM analysis in distributed cache."""
+        self.cache.set('llm_intent', cache_key, analysis, ttl=self.cache_ttl)
     
     def _analyze_intent_with_llm(self, question: str, resume_context: str = None, chat_history: list = None) -> Dict:
         """Use Snowflake Cortex LLM to analyze user intent and extract entities with full schema awareness, resume context, and conversation history."""

@@ -30,6 +30,8 @@ prometheus-fastapi-instrumentator==6.1.0
 # Caching
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+redis==5.0.1
+hiredis==2.3.2
 
 # HTTP client
 httpx==0.25.2

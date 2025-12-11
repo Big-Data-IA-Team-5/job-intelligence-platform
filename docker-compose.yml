@@ -17,6 +17,22 @@ services:
     networks:
       - job-intelligence-network
 
+  # Redis for distributed caching
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - job-intelligence-network
+
   # Airflow (using docker-compose in airflow directory)
 
   # Backend API
@@ -35,6 +51,9 @@ services:
       - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA}
       - SNOWFLAKE_ROLE=${SNOWFLAKE_ROLE}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_ENABLED=true
     volumes:
       - ./backend:/app
       - ./config:/app/config
@@ -44,6 +63,8 @@ services:
       - job-intelligence-network
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   # Frontend Streamlit App
@@ -76,3 +97,4 @@ networks:
 
 volumes:
   postgres-db-volume:
+  redis-data:
