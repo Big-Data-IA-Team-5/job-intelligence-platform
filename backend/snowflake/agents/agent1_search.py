@@ -376,7 +376,7 @@ Return ONLY a valid JSON object.
         if filters.get('visa_status'):
             visa = filters['visa_status']
             if visa in ['CPT', 'OPT', 'H-1B', 'US-Only']:
-                sql += f" AND j.visa_category = '{visa}"
+                sql += f" AND j.visa_category = '{visa}'"
         
         if filters.get('location'):
             loc = str(filters['location']).replace("'", "''")
