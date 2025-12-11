@@ -245,6 +245,52 @@ else:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             
+            # Display job cards if jobs are present in the message
+            if message["role"] == "assistant" and "jobs" in message:
+                jobs = message["jobs"]
+                if jobs and len(jobs) > 0:
+                    st.markdown(f"---")
+                    st.markdown(f"### 🎯 Found {len(jobs)} jobs (showing {min(len(jobs), 10)})")
+                    
+                    for i, job in enumerate(jobs[:10]):  # Show first 10 jobs
+                        with st.expander(f"**{i+1}. {job.get('TITLE', 'Unknown Title')}** at {job.get('COMPANY', 'Unknown')}"):
+                            col1, col2 = st.columns([3, 1])
+                            
+                            with col1:
+                                st.markdown(f"**🏢 Company:** {job.get('COMPANY', 'N/A')}")
+                                st.markdown(f"**📍 Location:** {job.get('LOCATION', 'N/A')}")
+                                
+                                if job.get('WORK_MODEL'):
+                                    st.markdown(f"**💼 Work Model:** {job['WORK_MODEL']}")
+                                
+                                if job.get('VISA_CATEGORY'):
+                                    st.markdown(f"**🎫 Visa:** {job['VISA_CATEGORY']}")
+                                
+                                if job.get('H1B_SPONSOR'):
+                                    approval_rate = job.get('H1B_APPROVAL_RATE', 100)
+                                    st.markdown(f"**✅ H-1B Sponsor:** Yes ({approval_rate}% approval rate)")
+                                
+                                if job.get('SALARY_MIN') and job.get('SALARY_MAX'):
+                                    st.markdown(f"**💰 Salary:** ${job['SALARY_MIN']:,.0f} - ${job['SALARY_MAX']:,.0f}")
+                                
+                                if job.get('DAYS_SINCE_POSTED') is not None:
+                                    days = job['DAYS_SINCE_POSTED']
+                                    if days == 0:
+                                        st.markdown(f"**📅 Posted:** Today")
+                                    elif days == 1:
+                                        st.markdown(f"**📅 Posted:** Yesterday")
+                                    else:
+                                        st.markdown(f"**📅 Posted:** {days} days ago")
+                            
+                            with col2:
+                                if job.get('MATCH_SCORE'):
+                                    score = int(job['MATCH_SCORE'])
+                                    color = "🟢" if score >= 70 else "🟡" if score >= 50 else "🔴"
+                                    st.markdown(f"{color} **{score}%** Match")
+                                
+                                if job.get('URL'):
+                                    st.link_button("🔗 Apply Now", job['URL'], use_container_width=True)
+            
             # Display AI Intelligence Debug Info (if available)
             if message["role"] == "assistant" and "debug_info" in message:
                 debug = message["debug_info"]
@@ -451,22 +497,29 @@ if prompt:
             
             if response and "answer" in response:
                 answer = response["answer"]
+                jobs = response.get("jobs", [])  # Extract jobs array from response
                 
                 # Update context manager with this conversation turn
                 st.session_state.context_manager.update_context(prompt, answer)
                 
                 # Check if we have debug info to display
                 debug_info = response.get("debug_info")
+                
+                # Build message with jobs and debug info
+                message_data = {
+                    "role": "assistant", 
+                    "content": answer
+                }
+                
+                # Add jobs if present
+                if jobs:
+                    message_data["jobs"] = jobs
+                
+                # Add debug info if present
                 if debug_info:
-                    # Store debug info with message for later display
-                    st.session_state.messages.append({
-                        "role": "assistant", 
-                        "content": answer,
-                        "debug_info": debug_info
-                    })
-                else:
-                    # Add to message history without debug
-                    st.session_state.messages.append({"role": "assistant", "content": answer})
+                    message_data["debug_info"] = debug_info
+                
+                st.session_state.messages.append(message_data)
             else:
                 st.session_state.messages.append({"role": "assistant", "content": "❌ Couldn't process request"})
         except Exception as e:
