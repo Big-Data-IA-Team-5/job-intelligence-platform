@@ -14,11 +14,8 @@ import sys
 import os
 import json
 
-# Add parent directory to path for Docker
-sys.path.insert(0, '/opt/airflow')
-
-# Import only lightweight modules at top level
-# Heavy imports moved inside task functions to prevent DAG import timeout
+# Load code dependencies from GCS (Composer-compatible)
+from gcs_loader import setup_code_dependencies, get_composer_bucket
 
 # Default arguments
 default_args = {
@@ -35,7 +32,10 @@ def scrape_internship_jobs(**context):
     """
     Scrape all internship categories from Airtable
     """
-    # Lazy imports to prevent DAG import timeout
+    # Load code from GCS
+    bucket = get_composer_bucket()
+    paths = setup_code_dependencies(bucket)
+    
     from scrapers.Internship_Airtable_scraper import InternshipAirtableScraper
     from dags.common.s3_utils import cleanup_old_s3_files
     

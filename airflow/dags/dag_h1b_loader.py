@@ -12,11 +12,8 @@ import pendulum
 import sys
 import os
 
-# Add parent directory to path for Docker
-sys.path.insert(0, '/opt/airflow')
-
-# Import only lightweight modules at top level
-# Heavy imports (pandas, json, etc.) moved inside task functions to prevent DAG import timeout
+# Load code dependencies from GCS (Composer-compatible)
+from gcs_loader import setup_code_dependencies, get_composer_bucket
 
 default_args = {
     'owner': 'airflow',
@@ -33,6 +30,10 @@ def load_h1b_data(**context):
     Load H-1B CSV file (pre-converted from Excel)
     ULTRA-OPTIMIZED: Skip pandas Excel parsing completely!
     """
+    # Load code from GCS
+    bucket = get_composer_bucket()
+    paths = setup_code_dependencies(bucket)
+    
     import pandas as pd
     from dags.common.s3_utils import cleanup_old_s3_files
     

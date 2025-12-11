@@ -1,14 +1,19 @@
 """
 Agent 2: Job Intelligence Chat Agent (Production-Ready)
 Uses pre-written SQL templates + Cortex for formatting answers
+Enhanced with caching, telemetry, and conversation state management
 """
 import snowflake.connector
 import os
 from dotenv import load_dotenv
-from typing import Dict, List
+from typing import Dict, List, Optional
 import json
 import re
 import logging
+import hashlib
+import time
+from datetime import datetime, timedelta
+from functools import lru_cache
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -16,8 +21,91 @@ logger = logging.getLogger(__name__)
 load_dotenv('config/.env')
 
 
+class ConversationState:
+    """Manages conversation context across multiple turns."""
+    
+    def __init__(self):
+        self.last_intent = None
+        self.last_job_title = None
+        self.last_location = None
+        self.last_company = None
+        self.last_keywords = []
+        self.query_count = 0
+        self.last_result_count = 0
+        self.timestamp = datetime.now()
+    
+    def update(self, intent_analysis: Dict, result_count: int = 0):
+        """Update state with latest query information."""
+        self.last_intent = intent_analysis.get('intent')
+        self.last_job_title = intent_analysis.get('job_title')
+        self.last_location = intent_analysis.get('location')
+        self.last_company = intent_analysis.get('company')
+        self.last_keywords = intent_analysis.get('keywords', [])
+        self.last_result_count = result_count
+        self.query_count += 1
+        self.timestamp = datetime.now()
+    
+    def should_expand_search(self) -> bool:
+        """Determine if search should be expanded based on state."""
+        # If last query returned few results and had location, try nationwide
+        return self.last_result_count < 5 and self.last_location is not None
+    
+    def get_context_summary(self) -> str:
+        """Get summary of conversation state for logging."""
+        return f"Intent: {self.last_intent}, Title: {self.last_job_title}, Location: {self.last_location}, Keywords: {self.last_keywords}, Results: {self.last_result_count}"
+
+
+class TelemetryTracker:
+    """Tracks patterns and performance metrics."""
+    
+    def __init__(self):
+        self.follow_up_patterns = {}  # Track "more" requests and their success
+        self.intent_counts = {}
+        self.query_times = []
+        self.fallback_triggers = 0
+        self.cache_hits = 0
+        self.cache_misses = 0
+    
+    def track_query(self, intent: str, duration: float, result_count: int, used_cache: bool = False):
+        """Track query execution."""
+        self.intent_counts[intent] = self.intent_counts.get(intent, 0) + 1
+        self.query_times.append(duration)
+        if used_cache:
+            self.cache_hits += 1
+        else:
+            self.cache_misses += 1
+    
+    def track_follow_up(self, pattern: str, success: bool, expanded_from: str = None):
+        """Track follow-up request patterns."""
+        if pattern not in self.follow_up_patterns:
+            self.follow_up_patterns[pattern] = {'count': 0, 'success': 0, 'expansions': []}
+        self.follow_up_patterns[pattern]['count'] += 1
+        if success:
+            self.follow_up_patterns[pattern]['success'] += 1
+        if expanded_from:
+            self.follow_up_patterns[pattern]['expansions'].append(expanded_from)
+    
+    def track_fallback(self, from_agent: str, to_agent: str, reason: str):
+        """Track when fallback to Agent 4 is triggered."""
+        self.fallback_triggers += 1
+        logger.info(f"📊 FALLBACK: {from_agent} → {to_agent} ({reason})")
+    
+    def get_stats(self) -> Dict:
+        """Get telemetry statistics."""
+        avg_time = sum(self.query_times) / len(self.query_times) if self.query_times else 0
+        cache_rate = (self.cache_hits / (self.cache_hits + self.cache_misses) * 100) if (self.cache_hits + self.cache_misses) > 0 else 0
+        return {
+            "total_queries": len(self.query_times),
+            "avg_query_time": round(avg_time, 2),
+            "intent_distribution": self.intent_counts,
+            "follow_up_patterns": self.follow_up_patterns,
+            "fallback_count": self.fallback_triggers,
+            "cache_hit_rate": round(cache_rate, 1)
+        }
+
+
 class JobIntelligenceAgent:
-    """Production-ready chat agent with template-based queries."""
+    """Production-ready chat agent with caching, telemetry, and state management."""
     
     def __init__(self):
         self.conn = snowflake.connector.connect(
@@ -28,10 +116,62 @@ class JobIntelligenceAgent:
             schema='processed',
             warehouse='compute_wh'
         )
-        logger.info("✅ Agent 2 (Chat Intelligence) initialized")
+        # Conversation state per user session
+        self.conversation_states = {}  # {user_id: ConversationState}
+        
+        # Telemetry tracker
+        self.telemetry = TelemetryTracker()
+        
+        # LLM response cache (in-memory for now)
+        self.llm_cache = {}  # {question_hash: (analysis, timestamp)}
+        self.cache_ttl = 300  # 5 minutes cache TTL
+        
+        logger.info("✅ Agent 2 (Chat Intelligence) initialized with caching & telemetry")
+    
+    def _get_cache_key(self, question: str, resume_context: str = None, chat_history: list = None) -> str:
+        """Generate cache key for LLM responses."""
+        # Create hash from question + resume + recent history
+        cache_input = question.lower().strip()
+        if resume_context:
+            cache_input += f"|resume:{resume_context[:200]}"  # First 200 chars of resume
+        if chat_history and len(chat_history) > 0:
+            # Include last query for context
+            cache_input += f"|history:{chat_history[-1].get('user', '')}"
+        return hashlib.md5(cache_input.encode()).hexdigest()
+    
+    def _get_cached_analysis(self, cache_key: str) -> Optional[Dict]:
+        """Retrieve cached LLM analysis if still valid."""
+        if cache_key in self.llm_cache:
+            cached_data, timestamp = self.llm_cache[cache_key]
+            age = (datetime.now() - timestamp).total_seconds()
+            if age < self.cache_ttl:
+                logger.info(f"💾 Cache HIT (age: {int(age)}s)")
+                return cached_data
+            else:
+                # Expired, remove from cache
+                del self.llm_cache[cache_key]
+                logger.info(f"⏰ Cache EXPIRED (age: {int(age)}s)")
+        return None
+    
+    def _cache_analysis(self, cache_key: str, analysis: Dict):
+        """Store LLM analysis in cache."""
+        self.llm_cache[cache_key] = (analysis, datetime.now())
+        # Limit cache size to 100 entries
+        if len(self.llm_cache) > 100:
+            # Remove oldest entry
+            oldest_key = min(self.llm_cache.keys(), key=lambda k: self.llm_cache[k][1])
+            del self.llm_cache[oldest_key]
+            logger.info(f"🧹 Cache cleaned (removed oldest entry)")
     
     def _analyze_intent_with_llm(self, question: str, resume_context: str = None, chat_history: list = None) -> Dict:
         """Use Snowflake Cortex LLM to analyze user intent and extract entities with full schema awareness, resume context, and conversation history."""
+        
+        # Check cache first
+        cache_key = self._get_cache_key(question, resume_context, chat_history)
+        cached_analysis = self._get_cached_analysis(cache_key)
+        if cached_analysis:
+            return cached_analysis
+        
         cursor = self.conn.cursor()
         
         try:
@@ -153,7 +293,7 @@ Return a JSON object with:
 - job_title: normalized job role (e.g., "Software Engineer", "Data Analyst", "Data Intern") OR null if user wants ANY jobs (e.g., "show me any jobs", "show me jobs", "list all jobs")
 - location: city or state (e.g., "Boston", "Seattle", "MA", "WA") OR null if not specified
 - company: company name if mentioned (single company) OR array of companies for comparison (e.g., ["Amazon", "Google"]) OR null
-- keywords: important search terms from the question
+- keywords: important search terms from the question (EXCLUDE meta-search words like "more", "other", "different", "show", "give", "find")
 - resume_skills: if resume provided, extract key technical skills (e.g., ["Python", "AWS", "Docker"])
 
 **CRITICAL RULES:**
@@ -161,6 +301,7 @@ Return a JSON object with:
 - Set job_title to null when user has resume and wants broad matching
 - Only set job_title to a specific role when user explicitly mentions it (e.g., "software engineer", "data analyst")
 - DO NOT guess or infer job_title when none is mentioned
+- **NEVER include meta-search terms in keywords:** Exclude "more", "other", "different", "show", "give", "find", "any", "all" - these are request types, not job requirements
 
 **Context-Aware Intelligence:**
 - If user has resume: extract technical skills and use them for matching (set job_title: null to search broadly)
@@ -179,7 +320,18 @@ Return a JSON object with:
 "analyze my resume" → {{"intent": "resume_analysis", "job_title": null, "location": null, "company": null, "keywords": ["resume", "analyze"]}}
 "jobs related to my resume" → {{"intent": "job_search", "job_title": null, "location": null, "company": null, "keywords": ["resume"], "resume_skills": ["Python", "Testing", "SQL"]}}
 "jobs matching my resume in Boston" → {{"intent": "job_search", "job_title": null, "location": "Boston", "company": null, "keywords": ["resume"], "resume_skills": ["Java", "AWS", "Docker"]}}
-"give me more jobs" → {{"intent": "job_search", "job_title": null, "location": null, "company": null, "keywords": ["more"]}}
+
+**FOLLOW-UP QUERY HANDLING - CRITICAL:**
+When user says "give me more", "show more", "find more", "other jobs", "different jobs":
+1. Look at chat history to extract previous search parameters (job_title, keywords, skills)
+2. **EXPAND THE SEARCH:** Set location to null (to search nationwide)
+3. Keep same job_title or keywords from previous query
+4. Set "is_more_request": true in response
+5. **DO NOT include "more", "other", "different" in keywords** - these are meta-search terms, not job requirements
+
+"give me more jobs" (after "data jobs in Boston") → {{"intent": "job_search", "job_title": "Data", "location": null, "company": null, "keywords": ["data"], "is_more_request": true}}
+"show me more" (after "software engineer in Seattle") → {{"intent": "job_search", "job_title": "Software Engineer", "location": null, "company": null, "keywords": ["software", "engineer"], "is_more_request": true}}
+"give me more data jobs" → {{"intent": "job_search", "job_title": "Data", "location": null, "company": null, "keywords": ["data"]}}
 "show me any jobs" → {{"intent": "job_search", "job_title": null, "location": null, "company": null, "keywords": ["any", "jobs"]}}
 "show me any 3 jobs" → {{"intent": "job_search", "job_title": null, "location": null, "company": null, "keywords": ["any", "jobs"]}}
 "show me jobs" → {{"intent": "job_search", "job_title": null, "location": null, "company": null, "keywords": ["jobs"]}}
@@ -213,29 +365,36 @@ Respond ONLY with the JSON object, no other text."""
                 if json_match:
                     analysis = json.loads(json_match.group())
                     logger.info(f"✅ Parsed analysis: {analysis}")
+                    # Cache the successful analysis
+                    self._cache_analysis(cache_key, analysis)
                     return analysis
                 else:
                     logger.warning(f"❌ No JSON found in LLM response")
             
             logger.warning("❌ No result from LLM, using fallback")
-            return {"intent": "general", "job_title": None, "location": None, "company": None, "keywords": []}
+            fallback_analysis = {"intent": "general", "job_title": None, "location": None, "company": None, "keywords": []}
+            self._cache_analysis(cache_key, fallback_analysis)
+            return fallback_analysis
             
         except Exception as e:
             logger.error(f"❌ LLM intent analysis failed: {e}, falling back to regex")
             import traceback
             traceback.print_exc()
-            return {"intent": "general", "job_title": None, "location": None, "company": None, "keywords": []}
+            fallback_analysis = {"intent": "general", "job_title": None, "location": None, "company": None, "keywords": []}
+            self._cache_analysis(cache_key, fallback_analysis)
+            return fallback_analysis
         finally:
             cursor.close()
     
-    def ask(self, question: str, resume_context: str = None, chat_history: list = None, return_debug: bool = True) -> Dict:
+    def ask(self, question: str, resume_context: str = None, chat_history: list = None, return_debug: bool = True, user_id: str = "default") -> Dict:
         """
-        Answer questions using intelligent LLM-powered SQL generation.
+        Answer questions using intelligent LLM-powered SQL generation with caching, telemetry, and state management.
         
         NO HARDCODED ROUTING - LLM decides everything based on:
         - User's natural language query
         - Available database schema (H1B_RAW: 97 fields, JOBS_PROCESSED: 22+ fields)
         - Resume context and conversation history
+        - Conversation state for follow-up handling
         
         Supports ANY question about the data we have!
         
@@ -244,9 +403,17 @@ Respond ONLY with the JSON object, no other text."""
             resume_context: User's resume text for personalization
             chat_history: Previous conversation for context
             return_debug: If True, includes debug metadata for frontend display
+            user_id: User identifier for state management
         """
         import time
         start_time = time.time()
+        
+        # Get or create conversation state for this user
+        if user_id not in self.conversation_states:
+            self.conversation_states[user_id] = ConversationState()
+        conv_state = self.conversation_states[user_id]
+        
+        logger.info(f"📊 Conversation State: {conv_state.get_context_summary()}")
         
         # Guardrail 1: Empty or very short queries
         if not question or len(question.strip()) < 3:
@@ -287,6 +454,41 @@ Respond ONLY with the JSON object, no other text."""
         try:
             intent_analysis = self._analyze_intent_with_llm(question, resume_context, chat_history)
             logger.info(f"🧠 LLM Analysis: {intent_analysis}")
+            
+            # Post-process: Clean keywords and handle "more" requests
+            meta_search_terms = {'more', 'other', 'different', 'additional', 'show', 'give', 'find', 'any', 'all', 'me', 'the'}
+            if 'keywords' in intent_analysis and isinstance(intent_analysis['keywords'], list):
+                # Filter out meta-search terms from keywords
+                intent_analysis['keywords'] = [kw for kw in intent_analysis['keywords'] if kw.lower() not in meta_search_terms]
+                logger.info(f"🧹 Cleaned keywords: {intent_analysis['keywords']}")
+            
+            # Handle "more" requests by extracting context from history
+            if intent_analysis.get('is_more_request') or any(word in question.lower() for word in ['more', 'other', 'different', 'additional']):
+                if chat_history and len(chat_history) > 0:
+                    # Extract previous job search parameters from last query
+                    last_user_query = chat_history[-1].get('user', '')
+                    
+                    # If no job_title was detected, try to extract from previous query
+                    if not intent_analysis.get('job_title'):
+                        for msg in reversed(chat_history[-3:]):
+                            user_msg = msg.get('user', '')
+                            # Look for job-related keywords in previous messages
+                            if any(word in user_msg.lower() for word in ['engineer', 'developer', 'analyst', 'data', 'software', 'machine learning', 'intern']):
+                                # Extract likely job title
+                                if 'data' in user_msg.lower():
+                                    intent_analysis['job_title'] = 'Data'
+                                    if 'data' not in intent_analysis.get('keywords', []):
+                                        intent_analysis['keywords'] = intent_analysis.get('keywords', []) + ['data']
+                                elif 'software' in user_msg.lower() or 'engineer' in user_msg.lower():
+                                    intent_analysis['job_title'] = 'Software Engineer'
+                                    if 'software' not in intent_analysis.get('keywords', []):
+                                        intent_analysis['keywords'] = intent_analysis.get('keywords', []) + ['software', 'engineer']
+                                break
+                    
+                    # Remove location to expand search nationwide
+                    intent_analysis['location'] = None
+                    logger.info(f"🔄 Expanded 'more' request: {intent_analysis}")
+            
             debug_info["intent_analysis"] = intent_analysis
             debug_info["steps"][-1]["status"] = "complete"
             debug_info["steps"][-1]["result"] = intent_analysis
@@ -347,6 +549,13 @@ Respond ONLY with the JSON object, no other text."""
             job_title = intent_analysis.get('job_title')
             location = intent_analysis.get('location')
             
+            # Track if this is a follow-up "more" request
+            is_follow_up = intent_analysis.get('is_more_request', False) or any(word in question.lower() for word in ['more', 'other', 'different'])
+            if is_follow_up:
+                pattern = f"more_{job_title or 'any'}_{location or 'nationwide'}"
+                previous_context = f"{conv_state.last_job_title}_{conv_state.last_location}" if conv_state.last_job_title else "none"
+                logger.info(f"🔄 Follow-up pattern: {pattern} (from: {previous_context})")
+            
             # Extract company list from intent OR from chat history
             company_list = intent_analysis.get('company', [])
             if not company_list and chat_history:
@@ -355,6 +564,46 @@ Respond ONLY with the JSON object, no other text."""
                 logger.info(f"📜 Extracted {len(company_list)} companies from chat history: {company_list}")
             
             result = self._search_jobs(question, job_title, location, resume_skills, resume_context, company_list)
+            
+            # AGENT 4 FALLBACK: If keyword search returns no jobs and resume provided, use semantic matching
+            result_count = len(result.get('data', [])) if result.get('status') == 'success' else 0
+            if result_count == 0 and resume_context and not is_follow_up:
+                logger.warning(f"⚠️ Agent 1 returned {result_count} jobs, attempting Agent 4 semantic fallback...")
+                self.telemetry.track_fallback("Agent 1", "Agent 4", "zero_results_with_resume")
+                debug_info["steps"].append({"step": "Agent 4 Fallback", "status": "running", "reason": "zero_results"})
+                
+                try:
+                    # Import Agent 4 for semantic matching
+                    import sys
+                    from pathlib import Path
+                    project_root = Path(__file__).parent.parent.parent
+                    sys.path.insert(0, str(project_root))
+                    from snowflake.agents.agent4_matcher import ResumeMatcherAgent
+                    
+                    agent4 = ResumeMatcherAgent()
+                    semantic_result = agent4.match_resume(resume_context, limit=10)
+                    
+                    if semantic_result.get('status') == 'success' and len(semantic_result.get('jobs', [])) > 0:
+                        logger.info(f"✅ Agent 4 found {len(semantic_result['jobs'])} jobs via semantic search!")
+                        result = semantic_result
+                        result['fallback_used'] = 'agent4_semantic'
+                        debug_info["agent_used"] = "Agent 4 - Semantic Matcher (Fallback)"
+                        debug_info["steps"][-1]["status"] = "complete"
+                        debug_info["steps"][-1]["jobs_found"] = len(semantic_result['jobs'])
+                    else:
+                        logger.warning(f"⚠️ Agent 4 also returned no results")
+                        debug_info["steps"][-1]["status"] = "no_improvement"
+                except Exception as e:
+                    logger.error(f"❌ Agent 4 fallback failed: {e}")
+                    debug_info["steps"][-1]["status"] = "error"
+                    debug_info["steps"][-1]["error"] = str(e)
+            
+            # Track follow-up success
+            if is_follow_up:
+                pattern = f"more_{job_title or 'any'}"
+                success = result_count > 0
+                previous_context = f"{conv_state.last_job_title}" if conv_state.last_job_title else None
+                self.telemetry.track_follow_up(pattern, success, previous_context)
         
         # Step 3: For ALL other queries, let LLM generate SQL dynamically
         else:
@@ -371,8 +620,21 @@ Respond ONLY with the JSON object, no other text."""
         execution_time = time.time() - start_time
         debug_info["execution_time_ms"] = int(execution_time * 1000)
         
+        # Update conversation state with this query
+        result_count = len(result.get('data', [])) if isinstance(result.get('data'), list) else 0
+        conv_state.update(intent_analysis, result_count)
+        
+        # Track telemetry
+        used_cache = debug_info.get("intent_analysis", {}).get("_from_cache", False)
+        self.telemetry.track_query(intent, execution_time, result_count, used_cache)
+        
+        # Add telemetry stats to debug info if requested
         if return_debug:
             result["debug_info"] = debug_info
+            result["debug_info"]["telemetry"] = self.telemetry.get_stats()
+            result["debug_info"]["conversation_state"] = conv_state.get_context_summary()
+        
+        logger.info(f"✅ Query completed in {execution_time:.2f}s, {result_count} results, Intent: {intent}")
         
         return result
     
@@ -928,7 +1190,7 @@ Respond ONLY with the JSON object, no other text."""
             
             # If no jobs found and resume provided, try progressively broader searches
             if result.get('status') == 'success' and not result.get('jobs', []) and resume_skills:
-                location = intent_analysis.get('location')
+                # Use location parameter already passed to this method
                 
                 # Step 1: Try broader job categories with same location
                 logger.info("🔍 No jobs found, using LLM to find related job categories...")

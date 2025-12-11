@@ -10,6 +10,9 @@ from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import pendulum
 
+# Load code dependencies from GCS (Composer-compatible)
+from gcs_loader import setup_code_dependencies, get_composer_bucket
+
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
@@ -25,14 +28,12 @@ def generate_embeddings(**context):
     import sys
     import os
     
-    # Add paths for script imports
-    airflow_home = '/opt/airflow'
-    sys.path.insert(0, airflow_home)
-    sys.path.insert(0, os.path.join(airflow_home, 'scripts'))
+    # Load code from GCS
+    bucket = get_composer_bucket()
+    paths = setup_code_dependencies(bucket)
     
     print(f"🔍 Python path: {sys.path[:3]}")
     print(f"🔍 Current directory: {os.getcwd()}")
-    print(f"🔍 Scripts directory exists: {os.path.exists(os.path.join(airflow_home, 'scripts'))}")
     
     try:
         from scripts.generate_embeddings import main

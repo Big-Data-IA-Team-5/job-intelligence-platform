@@ -14,12 +14,8 @@ import sys
 import os
 import json
 
-# Add parent directories to path
-sys.path.insert(0, '/opt/airflow')
-sys.path.insert(0, '/opt/airflow/scrapers')
-
-# Import only lightweight modules at top level
-# Heavy imports moved inside task functions to prevent DAG import timeout
+# Load code dependencies from GCS (Composer-compatible)
+from gcs_loader import setup_code_dependencies, get_composer_bucket
 
 default_args = {
     'owner': 'airflow',
@@ -33,7 +29,10 @@ default_args = {
 
 def scrape_fortune500_jobs(**context):
     """Scrape jobs from Fortune 500 companies"""
-    # Lazy imports to prevent DAG import timeout
+    # Load code from GCS
+    bucket = get_composer_bucket()
+    paths = setup_code_dependencies(bucket)
+    
     from scrapers.Fortune_500 import UltraSmartScraper, scrape_single_company, ProgressManager
     from dags.common.snowflake_utils import load_secrets
     from dags.common.s3_utils import cleanup_old_s3_files
