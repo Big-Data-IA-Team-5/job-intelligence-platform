@@ -1,5 +1,5 @@
 # Production-Ready Backend Dockerfile with Multi-Stage Build
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -42,8 +42,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app/wheels /wheels
 COPY --from=builder /app/requirements.txt .
 
-# Install Python packages from wheels
-RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
+# Install Python packages (prefer wheels, but allow PyPI for dependencies)
+RUN pip install --no-cache-dir --find-links=/wheels -r requirements.txt \
     && rm -rf /wheels
 
 # Create non-root user for security
@@ -56,7 +56,7 @@ COPY --chown=backend:backend ./app ./app
 # Copy Snowflake agents (required for backend to run)
 COPY --chown=backend:backend ./snowflake ./snowflake
 
-# Copy config files (if they exist)
+# Copy config files
 COPY --chown=backend:backend ./config ./config
 
 # Copy secrets.json (will be overridden by env vars in Cloud Run)

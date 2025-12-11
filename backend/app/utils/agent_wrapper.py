@@ -5,7 +5,8 @@ import sys
 from pathlib import Path
 
 # Add snowflake/agents to path
-agents_path = Path(__file__).parents[3] / 'snowflake' / 'agents'
+# In Docker: /app/app/utils/ -> /app/app/ -> /app/snowflake/agents (parents[2])
+agents_path = Path(__file__).parents[2] / 'snowflake' / 'agents'
 sys.path.insert(0, str(agents_path))
 
 from agent1_search import JobSearchAgent

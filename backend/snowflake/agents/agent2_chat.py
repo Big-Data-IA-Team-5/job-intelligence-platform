@@ -920,7 +920,6 @@ Respond ONLY with the JSON object, no other text."""
             # Handle errors from Agent 1
             if result.get('status') == 'error':
                 logger.error(f"❌ Agent 1 search failed: {result.get('error', 'Unknown error')}")
-                agent1.close()
                 return {
                     "answer": f"### ⚠️ Search Error\n\nI encountered an issue while searching for jobs:\n{result.get('error', 'Unknown error')}\n\nPlease try rephrasing your question or contact support if this persists.",
                     "data": [],
@@ -1000,6 +999,14 @@ Respond ONLY with the JSON object, no other text."""
                     answer += f"**🏢 Company:** {job['COMPANY']}  \n"
                     answer += f"**📍 Location:** {job['LOCATION']}  \n"
                     
+                    # Match score (calculated from relevance_score: normalize to 0-100%)
+                    if job.get('RELEVANCE_SCORE') is not None:
+                        # Normalize relevance score to percentage (typical range: 0-50, max could be higher)
+                        # Formula: min(100, (score / 50) * 100) to scale to 0-100%
+                        raw_score = float(job['RELEVANCE_SCORE'])
+                        match_percentage = min(100, (raw_score / 50) * 100)
+                        answer += f"**🎯 Match:** {match_percentage:.0f}%  \n"
+                    
                     # Visa category with color coding
                     visa = job['VISA_CATEGORY']
                     answer += f"**🎫 Visa Status:** {visa}  \n"
@@ -1031,6 +1038,15 @@ Respond ONLY with the JSON object, no other text."""
                             answer += f"**📅 Posted:** Yesterday  \n"
                         elif days <= 7:
                             answer += f"**📅 Posted:** {days} days ago  \n"
+                    
+                    # Job description snippet
+                    if job.get('DESCRIPTION'):
+                        desc = str(job['DESCRIPTION']).strip()
+                        if len(desc) > 200:
+                            desc_snippet = desc[:200] + "..."
+                        else:
+                            desc_snippet = desc
+                        answer += f"\n**📝 Description:**  \n{desc_snippet}\n"
                     
                     # Apply link as button-style with fallback
                     job_url = job.get('URL', '').strip()

@@ -45,7 +45,5 @@ test_*.py
 *.log
 logs/
 
-# Temporary files during build (will be copied explicitly)
-snowflake/
-config/
-secrets.json
+# Scripts with credentials
+setup-secrets.sh

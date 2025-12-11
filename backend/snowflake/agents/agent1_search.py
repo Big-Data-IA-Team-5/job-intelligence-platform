@@ -83,6 +83,11 @@ class JobSearchAgent:
         cursor = self.conn.cursor()
         
         try:
+            # DEBUG: Verify table exists and has data
+            cursor.execute("SELECT COUNT(*) FROM jobs_processed")
+            table_count = cursor.fetchone()[0]
+            logger.info(f"🗄️  JOBS_PROCESSED table has {table_count} total rows")
+            
             # Use LLM to parse the query
             parsed_query = self._parse_query_with_llm(query, cursor)
             
@@ -90,11 +95,14 @@ class JobSearchAgent:
             sql = self._build_sql_from_parsed_query(parsed_query, filters or {})
             
             # DEBUG: Log the SQL being executed
-            logger.info(f"🔍 Executing SQL (first 500 chars): {sql[:500]}")
+            logger.info(f"🔍 Executing SQL (full query):\n{sql}")
             
             cursor.execute(sql)
             columns = [col[0] for col in cursor.description]
             results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            
+            # DEBUG: Log row count before deduplication
+            logger.info(f"📊 SQL returned {len(results)} rows from database")
             
             # Deduplicate jobs by title + company + location
             seen = set()

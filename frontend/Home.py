@@ -184,7 +184,10 @@ if not st.session_state.messages:
                         st.session_state.resume_text = resume_text
                         st.session_state.uploaded_resume_id = current_file_id
                         st.session_state.uploaded_resume = upload_file.name
-                        st.success(f"✅ Resume uploaded: {upload_file.name} ({len(resume_text)} characters)")
+                        
+                        # Show success message with instructions - NO automatic job search
+                        st.success(f"✅ Resume uploaded: {upload_file.name}")
+                        st.info("💡 Now ask me: **'Show me jobs matching my resume'** or any other question!")
                         st.rerun()
                     else:
                         st.error("❌ Resume too short. Please upload a complete resume.")
@@ -353,22 +356,17 @@ else:
                                         experience = profile.get('total_experience_years', 0)
                                         education = profile.get('education_level', 'Not specified')
                                         
-                                        # Add as chat message with job matches
+                                        # Add as chat message - ONLY show analysis, NO job search
                                         summary = f"✅ **Resume uploaded: {upload_file.name}**\n\n"
-                                        summary += f"💼 {experience} years experience\n"
-                                        summary += f"🎓 {education}\n"
-                                        summary += f"🔧 {', '.join(skills[:5]) if skills else 'Skills detected'}\n\n"
-                                        
-                                        # Show top 3 job matches inline
-                                        if matches:
-                                            summary += f"\n🎯 **Top {len(matches[:3])} Job Matches:**\n\n"
-                                            for i, job in enumerate(matches[:3], 1):
-                                                summary += f"{i}. **{job['title']}** at {job['company']}\n"
-                                                summary += f"   📍 {job['location']} | Match: {job['overall_score']:.0f}%\n"
-                                                summary += f"   [Apply Now]({job['url']})\n\n"
-                                            summary += f"\n💡 Ask me 'show all jobs' to see more matches!"
-                                        else:
-                                            summary += f"Ask me anything about jobs!"
+                                        summary += f"**📋 Resume Analysis:**\n"
+                                        summary += f"💼 Experience: {experience} years\n"
+                                        summary += f"🎓 Education: {education}\n"
+                                        summary += f"🔧 Key Skills: {', '.join(skills[:5]) if skills else 'Detected'}\n\n"
+                                        summary += f"💡 **Ready to help!** Ask me:\n"
+                                        summary += f"• 'Show me jobs matching my resume'\n"
+                                        summary += f"• 'Find data engineer roles in Boston'\n"
+                                        summary += f"• 'Analyze my resume'\n"
+                                        summary += f"• Or any other question!"
                                         
                                         st.session_state.messages.append({
                                             "role": "assistant",

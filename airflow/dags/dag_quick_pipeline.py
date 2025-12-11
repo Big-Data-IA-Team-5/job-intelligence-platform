@@ -13,9 +13,8 @@ import pendulum
 import sys
 import os
 
-# Add parent directories to path
-sys.path.insert(0, '/opt/airflow')
-sys.path.insert(0, '/opt/airflow/scrapers')
+# Load code dependencies from GCS (Composer-compatible)
+from gcs_loader import setup_code_dependencies, get_composer_bucket
 
 default_args = {
     'owner': 'airflow',
@@ -29,8 +28,11 @@ default_args = {
 
 def test_scrape_jobs(**context):
     """Quick test scrape - only 2 categories with 1 worker"""
+    # Load code from GCS
+    bucket = get_composer_bucket()
+    paths = setup_code_dependencies(bucket)
+    
     from scrapers.Airtable_Comprehensive_scraper import ComprehensiveAirtableScraper
-    from dags.common.s3_utils import cleanup_old_s3_files
     import json
     
     print("=" * 80)
@@ -87,8 +89,12 @@ def test_scrape_jobs(**context):
 
 def test_upload_to_snowflake(**context):
     """Upload test data to Snowflake"""
-    from dags.common.snowflake_utils import upload_to_snowflake, load_secrets
+    # Load code from GCS
+    bucket = get_composer_bucket()
+    paths = setup_code_dependencies(bucket)
+    
     import json
+    import snowflake.connector
     
     print("=" * 80)
     print("🧪 TEST UPLOAD TO SNOWFLAKE")

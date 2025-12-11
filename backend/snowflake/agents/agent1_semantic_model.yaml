@@ -1,0 +1,73 @@
+name: job_search_semantic_model
+description: "Natural language job search with visa intelligence"
+
+tables:
+  - name: jobs_processed
+    description: "Job postings with visa classification"
+    base_table:
+      database: job_intelligence
+      schema: processed
+      table: jobs_processed
+    
+    columns:
+      - name: title
+        description: "Job title (e.g., Software Engineer, Data Analyst)"
+        synonyms: ["position", "role", "job"]
+        data_type: STRING
+        
+      - name: company_clean
+        description: "Company or employer name"
+        synonyms: ["employer", "organization", "company"]
+        data_type: STRING
+        
+      - name: location
+        description: "Job location (city, state)"
+        synonyms: ["place", "city", "area"]
+        data_type: STRING
+        
+      - name: salary_min
+        description: "Minimum salary in USD per year"
+        synonyms: ["minimum pay", "base salary"]
+        data_type: NUMBER
+        
+      - name: job_type
+        description: "Job type: Internship, Full-time, Remote"
+        synonyms: ["employment type", "position type"]
+        data_type: STRING
+        
+      - name: visa_category
+        description: "Visa: CPT (internships), OPT (new grads), H-1B (sponsored)"
+        synonyms: ["visa status", "work authorization"]
+        data_type: STRING
+        
+      - name: h1b_sponsor
+        description: "Whether company sponsors H-1B visas"
+        synonyms: ["sponsors visa", "h1b sponsorship"]
+        data_type: BOOLEAN
+
+    measures:
+      - name: total_jobs
+        description: "Total number of jobs"
+        expr: COUNT(*)
+        
+      - name: avg_salary
+        description: "Average salary"
+        expr: AVG((salary_min + salary_max) / 2)
+
+filters:
+  - name: cpt_eligible
+    description: "CPT internships for students"
+    expr: "visa_category = 'CPT'"
+    
+  - name: h1b_sponsors
+    description: "Companies that sponsor H-1B"
+    expr: "h1b_sponsor = TRUE"
+
+sample_queries:
+  - question: "Show me CPT internships in Boston"
+    sql: |
+      SELECT title, company_clean, location
+      FROM jobs_processed
+      WHERE visa_category = 'CPT'
+        AND location ILIKE '%Boston%'
+      LIMIT 20
