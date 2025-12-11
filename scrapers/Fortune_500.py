@@ -1374,25 +1374,36 @@ class HTTPClient:
             options.add_argument(f'user-agent={random.choice(self.user_agents)}')
             options.add_argument('--window-size=1920,1080')
             
-            # Use Selenium Grid with retry logic
-            selenium_url = os.getenv('SELENIUM_REMOTE_URL', 'http://selenium-chrome:4444/wd/hub')
+            # Check if running in Composer/Airflow (no Selenium Grid available)
+            selenium_url = os.getenv('SELENIUM_REMOTE_URL', '')
+            use_remote = selenium_url and 'selenium' in selenium_url.lower()
             
-            # Retry connection to Selenium Grid with exponential backoff
-            max_connection_retries = 3
-            for retry in range(max_connection_retries):
-                try:
-                    self.driver = webdriver.Remote(command_executor=selenium_url, options=options)
-                    self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-                    return True
-                except Exception as e:
-                    if retry < max_connection_retries - 1:
-                        wait_time = (retry + 1) * 5  # 5, 10, 15 seconds
-                        print(f"   ⚠️ Failed to connect to Selenium Grid (attempt {retry + 1}/{max_connection_retries}): {str(e)[:80]}")
-                        print(f"   ⏳ Retrying in {wait_time} seconds...")
-                        time.sleep(wait_time)
-                    else:
-                        print(f"   ❌ Failed to connect to Selenium Grid after {max_connection_retries} attempts: {str(e)[:80]}")
-                        return False
+            if use_remote:
+                # Docker environment with Selenium Grid
+                print(f"   🌐 Using Selenium Grid at {selenium_url}")
+                max_connection_retries = 3
+                for retry in range(max_connection_retries):
+                    try:
+                        self.driver = webdriver.Remote(command_executor=selenium_url, options=options)
+                        self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                        return True
+                    except Exception as e:
+                        if retry < max_connection_retries - 1:
+                            wait_time = (retry + 1) * 5
+                            print(f"   ⚠️ Failed to connect to Selenium Grid (attempt {retry + 1}/{max_connection_retries}): {str(e)[:80]}")
+                            print(f"   ⏳ Retrying in {wait_time} seconds...")
+                            time.sleep(wait_time)
+                        else:
+                            print(f"   ❌ Failed to connect to Selenium Grid after {max_connection_retries} attempts: {str(e)[:80]}")
+                            return False
+            else:
+                # Composer/Airflow - use chromedriver-binary package
+                print("   💻 Using chromedriver-binary package (Composer/Airflow mode)")
+                # chromedriver-binary package includes the driver - just import to add to PATH
+                import chromedriver_binary
+                self.driver = webdriver.Chrome(options=options)
+                self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                return True
         except Exception as e:
             print(f"   ⚠️ Selenium init failed: {str(e)[:80]}")
             return False

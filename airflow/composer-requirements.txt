@@ -11,6 +11,7 @@ beautifulsoup4==4.12.2
 lxml==5.0.0
 selenium==4.15.2
 webdriver-manager==4.0.1
+chromedriver-binary==131.0.6778.87.0
 pyairtable==2.2.0
 
 # DBT

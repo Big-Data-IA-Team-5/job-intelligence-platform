@@ -73,8 +73,10 @@ def test_scrape_jobs(**context):
     print(f"   Categories processed: {len(test_categories)}")
     print(f"   Successful: {sum(1 for r in results.values() if r.get('status') == 'success')}/{len(results)}")
     
-    # Save to test file
-    output_file = '/opt/airflow/scraped_jobs/test_pipeline_jobs.json'
+    # Save to test file (create directory if needed)
+    output_dir = '/tmp/scraped_jobs'
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = f'{output_dir}/test_pipeline_jobs.json'
     with open(output_file, 'w') as f:
         json.dump(all_jobs, f, indent=2)
     

@@ -283,28 +283,43 @@ class ComprehensiveAirtableScraper:
                         })
                         chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
                         chrome_options.page_load_strategy = 'eager'  # Don't wait for full page load
-                        # Use Selenium Grid with retry logic
-                        selenium_url = os.getenv('SELENIUM_REMOTE_URL', 'http://selenium-chrome:4444/wd/hub')
                         
-                        # Retry connection to Selenium Grid with exponential backoff
-                        max_connection_retries = 3
-                        for retry in range(max_connection_retries):
-                            try:
-                                driver = webdriver.Remote(command_executor=selenium_url, options=chrome_options)
-                                with self.lock:
-                                    logger.info("✓ Chrome driver initialized")
-                                break
-                            except Exception as e:
-                                if retry < max_connection_retries - 1:
-                                    wait_time = (retry + 1) * 5  # 5, 10, 15 seconds
+                        # Check if running in Composer/Airflow (no Selenium Grid available)
+                        selenium_url = os.getenv('SELENIUM_REMOTE_URL', '')
+                        use_remote = selenium_url and 'selenium' in selenium_url.lower()
+                        
+                        if use_remote:
+                            # Docker environment with Selenium Grid
+                            with self.lock:
+                                logger.info(f"🌐 Using Selenium Grid at {selenium_url}")
+                            # Retry connection to Selenium Grid with exponential backoff
+                            max_connection_retries = 3
+                            for retry in range(max_connection_retries):
+                                try:
+                                    driver = webdriver.Remote(command_executor=selenium_url, options=chrome_options)
                                     with self.lock:
-                                        logger.warning(f"⚠️  Failed to connect to Selenium Grid (attempt {retry + 1}/{max_connection_retries}): {str(e)}")
-                                        logger.info(f"⏳ Retrying in {wait_time} seconds...")
-                                    time.sleep(wait_time)
-                                else:
-                                    with self.lock:
-                                        logger.error(f"❌ Failed to connect to Selenium Grid after {max_connection_retries} attempts")
-                                    raise
+                                        logger.info("✓ Chrome driver initialized (Grid)")
+                                    break
+                                except Exception as e:
+                                    if retry < max_connection_retries - 1:
+                                        wait_time = (retry + 1) * 5  # 5, 10, 15 seconds
+                                        with self.lock:
+                                            logger.warning(f"⚠️  Failed to connect to Selenium Grid (attempt {retry + 1}/{max_connection_retries}): {str(e)}")
+                                            logger.info(f"⏳ Retrying in {wait_time} seconds...")
+                                        time.sleep(wait_time)
+                                    else:
+                                        with self.lock:
+                                            logger.error(f"❌ Failed to connect to Selenium Grid after {max_connection_retries} attempts")
+                                        raise
+                        else:
+                            # Composer/Airflow - use chromedriver-binary package
+                            with self.lock:
+                                logger.info("💻 Using chromedriver-binary package (Composer/Airflow mode)")
+                            # chromedriver-binary package includes the driver - just import to add to PATH
+                            import chromedriver_binary
+                            driver = webdriver.Chrome(options=chrome_options)
+                            with self.lock:
+                                logger.info("✓ Chrome driver initialized from chromedriver-binary package")
                     
                     with self.lock:
                         logger.info(f"\n🌐 Loading {url}...")
@@ -748,7 +763,7 @@ class ComprehensiveAirtableScraper:
     
     def save_outputs(self, all_results):
         """Save consolidated outputs"""
-        folder = "/opt/airflow/scraped_jobs"
+        folder = "/tmp/scraped_jobs"
         os.makedirs(folder, exist_ok=True)
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
