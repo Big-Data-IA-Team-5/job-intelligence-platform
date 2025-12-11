@@ -237,26 +237,26 @@ Return ONLY a valid JSON object.
     def _build_sql_from_parsed_query(self, parsed: Dict, filters: Dict) -> str:
         """Build SQL query from LLM-parsed search intent with enhanced scoring."""
         
-        # Base SELECT with relevance scoring
+        # Base SELECT with deduplication and relevance scoring
         sql = """
             SELECT 
-                job_id, url, title, company_clean as company, location,
-                description, salary_min, salary_max, job_type, visa_category,
-                h1b_sponsor, days_since_posted, work_model, department,
-                company_size, h1b_sponsored_explicit, is_new_grad_role,
-                job_category, qualifications, h1b_approval_rate,
-                h1b_total_petitions, classification_confidence,
-                snippet, posted_date,
-                h1b_employer_name, h1b_city, h1b_state, h1b_avg_wage,
-                sponsorship_score, h1b_risk_level, source,
+                j.job_id, j.url, j.title, j.company_clean as company, j.location,
+                j.description, j.salary_min, j.salary_max, j.job_type, j.visa_category,
+                j.h1b_sponsor, j.days_since_posted, j.work_model, j.department,
+                j.company_size, j.h1b_sponsored_explicit, j.is_new_grad_role,
+                j.job_category, j.qualifications, j.h1b_approval_rate,
+                j.h1b_total_petitions, j.classification_confidence,
+                j.snippet, j.posted_date,
+                j.h1b_employer_name, j.h1b_city, j.h1b_state, j.h1b_avg_wage,
+                j.sponsorship_score, j.h1b_risk_level, j.source,
                 -- Relevance score for better ranking
                 (
-                    (CASE WHEN h1b_sponsor = TRUE THEN 10 ELSE 0 END) +
-                    (CASE WHEN h1b_approval_rate > 0.8 THEN 5 WHEN h1b_approval_rate > 0.6 THEN 3 ELSE 0 END) +
-                    (CASE WHEN h1b_total_petitions > 100 THEN 5 WHEN h1b_total_petitions > 10 THEN 3 ELSE 0 END) +
-                    (CASE WHEN work_model = 'Remote' THEN 3 ELSE 0 END) +
-                    (CASE WHEN salary_min IS NOT NULL THEN 2 ELSE 0 END) +
-                    (CASE WHEN days_since_posted <= 7 THEN 5 WHEN days_since_posted <= 30 THEN 2 ELSE 0 END)
+                    (CASE WHEN j.h1b_sponsor = TRUE THEN 10 ELSE 0 END) +
+                    (CASE WHEN j.h1b_approval_rate > 0.8 THEN 5 WHEN j.h1b_approval_rate > 0.6 THEN 3 ELSE 0 END) +
+                    (CASE WHEN j.h1b_total_petitions > 100 THEN 5 WHEN j.h1b_total_petitions > 10 THEN 3 ELSE 0 END) +
+                    (CASE WHEN j.work_model = 'Remote' THEN 3 ELSE 0 END) +
+                    (CASE WHEN j.salary_min IS NOT NULL THEN 2 ELSE 0 END) +
+                    (CASE WHEN j.days_since_posted <= 7 THEN 5 WHEN j.days_since_posted <= 30 THEN 2 ELSE 0 END)
         """
         
         # Add resume skill matching to relevance score if provided
@@ -267,9 +267,9 @@ Return ONLY a valid JSON object.
                 sanitized_skill = str(skill).replace("'", "''").replace('%', '').replace('_', '')
                 # Check if skill appears in title, description, or qualifications (20 points per match)
                 skill_checks.append(
-                    f"(CASE WHEN LOWER(title) LIKE '%{sanitized_skill.lower()}%' "
-                    f"OR LOWER(description) LIKE '%{sanitized_skill.lower()}%' "
-                    f"OR LOWER(qualifications) LIKE '%{sanitized_skill.lower()}%' "
+                    f"(CASE WHEN LOWER(j.title) LIKE '%{sanitized_skill.lower()}%' "
+                    f"OR LOWER(j.description) LIKE '%{sanitized_skill.lower()}%' "
+                    f"OR LOWER(j.qualifications) LIKE '%{sanitized_skill.lower()}%' "
                     f"THEN 20 ELSE 0 END)"
                 )
             
@@ -278,14 +278,19 @@ Return ONLY a valid JSON object.
         
         sql += """
                 ) as relevance_score
-            FROM jobs_processed
-            WHERE 1=1
-                AND location NOT LIKE '% | %'  -- Exclude international locations like 'AR | Remote', 'BR | Remote'
-                AND location NOT LIKE '%Argentina%'
-                AND location NOT LIKE '%Brazil%'
-                AND location NOT LIKE '%India%'
-                AND location NOT LIKE '%Canada%'
-                AND location NOT LIKE '%Mexico%'
+            FROM (
+                -- Deduplicate jobs: keep most recent scrape per job_id
+                SELECT *,
+                    ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY scraped_at DESC) as rn
+                FROM jobs_processed
+            ) j
+            WHERE j.rn = 1
+                AND j.location NOT LIKE '% | %'  -- Exclude international locations like 'AR | Remote', 'BR | Remote'
+                AND j.location NOT LIKE '%Argentina%'
+                AND j.location NOT LIKE '%Brazil%'
+                AND j.location NOT LIKE '%India%'
+                AND j.location NOT LIKE '%Canada%'
+                AND j.location NOT LIKE '%Mexico%'
         """
         
         # Add job title filters from LLM parsing
@@ -296,7 +301,7 @@ Return ONLY a valid JSON object.
             for title in job_titles:
                 if title:  # Skip empty/None titles
                     sanitized_title = str(title).replace("'", "''")
-                    title_conditions.append(f"title ILIKE '%{sanitized_title}%'")
+                    title_conditions.append(f"j.title ILIKE '%{sanitized_title}%'")
             
             if title_conditions:
                 sql += f" AND ({' OR '.join(title_conditions)})"
@@ -305,7 +310,7 @@ Return ONLY a valid JSON object.
         company = parsed.get('company')
         if company:
             sanitized_company = str(company).replace("'", "''")
-            sql += f" AND UPPER(company_clean) LIKE '%{sanitized_company.upper()}%'"
+            sql += f" AND UPPER(j.company_clean) LIKE '%{sanitized_company.upper()}%'"
         
         # Add company list filter from context (e.g., "jobs in these companies")
         company_list = filters.get('companies', [])
@@ -314,7 +319,7 @@ Return ONLY a valid JSON object.
             for comp in company_list[:15]:  # Limit to 15 companies
                 sanitized = str(comp).replace("'", "''").strip()
                 if sanitized:
-                    company_conditions.append(f"UPPER(company_clean) LIKE '%{sanitized.upper()}%'")
+                    company_conditions.append(f"UPPER(j.company_clean) LIKE '%{sanitized.upper()}%'")
             
             if company_conditions:
                 sql += f" AND ({' OR '.join(company_conditions)})"
@@ -323,22 +328,22 @@ Return ONLY a valid JSON object.
         location = parsed.get('location')
         if location:
             sanitized_location = str(location).replace("'", "''")
-            sql += f" AND location ILIKE '%{sanitized_location}%'"
+            sql += f" AND j.location ILIKE '%{sanitized_location}%'"
         
         # Add visa type filter from LLM
         visa_type = parsed.get('visa_type')
         if visa_type and visa_type in ['CPT', 'OPT', 'H-1B', 'US-Only']:
-            sql += f" AND visa_category = '{visa_type}'"
+            sql += f" AND j.visa_category = '{visa_type}'"
         
         # Add H-1B requirement filter
         h1b_required = parsed.get('h1b_required', False)
         if h1b_required:
-            sql += " AND h1b_sponsor = TRUE"
+            sql += " AND j.h1b_sponsor = TRUE"
         
         # Add minimum approval rate filter
         min_approval_rate = parsed.get('min_approval_rate')
         if min_approval_rate:
-            sql += f" AND h1b_approval_rate >= {min_approval_rate}"
+            sql += f" AND j.h1b_approval_rate >= {min_approval_rate}"
         
         # DISABLED: job_category filter is unreliable - most jobs have NULL or empty values
         # Many "Data Engineer" jobs are categorized as "Engineering" or have no category
@@ -351,7 +356,7 @@ Return ONLY a valid JSON object.
         # Add new grad filter
         new_grad_only = parsed.get('new_grad_only', False)
         if new_grad_only:
-            sql += " AND is_new_grad_role = TRUE"
+            sql += " AND j.is_new_grad_role = TRUE"
         
         # Add work model filter from LLM
         work_model = parsed.get('work_model')
@@ -359,35 +364,35 @@ Return ONLY a valid JSON object.
             work_model_normalized = work_model.title()  # Remote, Hybrid, On-site
             if work_model_normalized == 'Onsite':
                 work_model_normalized = 'On-site'
-            sql += f" AND work_model = '{work_model_normalized}'"
+            sql += f" AND j.work_model = '{work_model_normalized}'"
         
         # Add job type filter from LLM
         job_type = parsed.get('job_type')
         if job_type:
             sanitized_job_type = str(job_type).replace("'", "''")
-            sql += f" AND job_type ILIKE '%{sanitized_job_type}%'"
+            sql += f" AND j.job_type ILIKE '%{sanitized_job_type}%'"
         
         # Apply additional filters from API params
         if filters.get('visa_status'):
             visa = filters['visa_status']
             if visa in ['CPT', 'OPT', 'H-1B', 'US-Only']:
-                sql += f" AND visa_category = '{visa}'"
+                sql += f" AND j.visa_category = '{visa}"
         
         if filters.get('location'):
             loc = str(filters['location']).replace("'", "''")
-            sql += f" AND location ILIKE '%{loc}%'"
+            sql += f" AND j.location ILIKE '%{loc}%'"
         
         if filters.get('salary_min'):
             try:
                 salary = int(filters['salary_min'])
-                sql += f" AND salary_min >= {salary}"
+                sql += f" AND j.salary_min >= {salary}"
             except (ValueError, TypeError):
                 pass
         
         if filters.get('salary_max'):
             try:
                 max_sal = int(filters['salary_max'])
-                sql += f" AND salary_max <= {max_sal}"
+                sql += f" AND j.salary_max <= {max_sal}"
             except (ValueError, TypeError):
                 pass
         
@@ -396,39 +401,39 @@ Return ONLY a valid JSON object.
             work_model_normalized = wm.title()
             if work_model_normalized == 'Onsite':
                 work_model_normalized = 'On-site'
-            sql += f" AND work_model = '{work_model_normalized}'"
+            sql += f" AND j.work_model = '{work_model_normalized}'"
         
         if filters.get('h1b_sponsor'):
-            sql += " AND h1b_sponsor = TRUE"
+            sql += " AND j.h1b_sponsor = TRUE"
         
         if filters.get('min_approval_rate'):
             try:
                 rate = float(filters['min_approval_rate'])
-                sql += f" AND h1b_approval_rate >= {rate}"
+                sql += f" AND j.h1b_approval_rate >= {rate}"
             except (ValueError, TypeError):
                 pass
         
         if filters.get('min_petitions'):
             try:
                 petitions = int(filters['min_petitions'])
-                sql += f" AND h1b_total_petitions >= {petitions}"
+                sql += f" AND j.h1b_total_petitions >= {petitions}"
             except (ValueError, TypeError):
                 pass
         
         if filters.get('new_grad_only'):
-            sql += " AND is_new_grad_role = TRUE"
+            sql += " AND j.is_new_grad_role = TRUE"
         
         if filters.get('job_category'):
             cat = str(filters['job_category']).replace("'", "''")
-            sql += f" AND job_category = '{cat}'"
+            sql += f" AND j.job_category = '{cat}'"
         
         if filters.get('company_size'):
             cs = str(filters['company_size']).replace("'", "''")
-            sql += f" AND company_size = '{cs}'"
+            sql += f" AND j.company_size = '{cs}'"
         
         # Order by relevance score (better sponsors, recent, remote) and limit
         limit = filters.get('limit', 20)
-        sql += f"\n            ORDER BY relevance_score DESC, days_since_posted ASC\n            LIMIT {min(int(limit), 100)}"
+        sql += f"\n            ORDER BY relevance_score DESC, j.days_since_posted ASC\n            LIMIT {min(int(limit), 100)}"
         
         return sql
     
@@ -441,16 +446,22 @@ Return ONLY a valid JSON object.
             sql = """
                 SELECT 
                     COUNT(*) as total_jobs,
-                    COUNT(DISTINCT company_clean) as total_companies,
-                    COUNT_IF(visa_category = 'CPT') as cpt_jobs,
-                    COUNT_IF(visa_category = 'OPT') as opt_jobs,
-                    COUNT_IF(visa_category = 'H-1B') as h1b_jobs,
-                    COUNT_IF(h1b_sponsor = TRUE) as h1b_sponsors,
-                    COUNT_IF(work_model = 'Remote') as remote_jobs,
-                    COUNT_IF(work_model = 'Hybrid') as hybrid_jobs,
-                    COUNT_IF(is_new_grad_role = TRUE) as new_grad_jobs,
-                    COUNT_IF(h1b_sponsored_explicit = TRUE) as explicit_sponsors
-                FROM jobs_processed
+                    COUNT(DISTINCT j.company_clean) as total_companies,
+                    COUNT_IF(j.visa_category = 'CPT') as cpt_jobs,
+                    COUNT_IF(j.visa_category = 'OPT') as opt_jobs,
+                    COUNT_IF(j.visa_category = 'H-1B') as h1b_jobs,
+                    COUNT_IF(j.h1b_sponsor = TRUE) as h1b_sponsors,
+                    COUNT_IF(j.work_model = 'Remote') as remote_jobs,
+                    COUNT_IF(j.work_model = 'Hybrid') as hybrid_jobs,
+                    COUNT_IF(j.is_new_grad_role = TRUE) as new_grad_jobs,
+                    COUNT_IF(j.h1b_sponsored_explicit = TRUE) as explicit_sponsors
+                FROM (
+                    -- Deduplicate jobs: keep most recent scrape per job_id
+                    SELECT *,
+                        ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY scraped_at DESC) as rn
+                    FROM jobs_processed
+                ) j
+                WHERE j.rn = 1
             """
             
             cursor.execute(sql)
