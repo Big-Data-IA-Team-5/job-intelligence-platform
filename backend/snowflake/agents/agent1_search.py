@@ -281,10 +281,10 @@ Return ONLY a valid JSON object.
             FROM (
                 -- Deduplicate jobs: keep most recent scrape per job_id
                 SELECT *,
-                    ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY scraped_at DESC) as rn
+                    ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY scraped_at DESC) as row_num
                 FROM jobs_processed
             ) j
-            WHERE j.rn = 1
+            WHERE j.row_num = 1
                 AND j.location NOT LIKE '% | %'  -- Exclude international locations like 'AR | Remote', 'BR | Remote'
                 AND j.location NOT LIKE '%Argentina%'
                 AND j.location NOT LIKE '%Brazil%'
@@ -458,10 +458,10 @@ Return ONLY a valid JSON object.
                 FROM (
                     -- Deduplicate jobs: keep most recent scrape per job_id
                     SELECT *,
-                        ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY scraped_at DESC) as rn
+                        ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY scraped_at DESC) as row_num
                     FROM jobs_processed
                 ) j
-                WHERE j.rn = 1
+                WHERE j.row_num = 1
             """
             
             cursor.execute(sql)
