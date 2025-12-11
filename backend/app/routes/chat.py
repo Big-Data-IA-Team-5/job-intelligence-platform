@@ -75,8 +75,9 @@ async def ask_question(request: ChatRequest):
         logger.info(f"📄 Resume context provided ({len(request.resume_text)} chars)")
     
     # Use chat_history from request if provided, otherwise use stored history
-    chat_hist = request.chat_history if request.chat_history else conversation_history.get(request.user_id, [])
-    logger.info(f"💬 Using chat history: {len(chat_hist)} messages (from {'request' if request.chat_history else 'memory'})")
+    # Check if None specifically (not empty list), since [] is a valid empty history
+    chat_hist = request.chat_history if request.chat_history is not None else conversation_history.get(request.user_id, [])
+    logger.info(f"💬 Using chat history: {len(chat_hist)} messages (from {'request' if request.chat_history is not None else 'memory'})")
     
     agent = JobIntelligenceAgent()
     
@@ -95,7 +96,7 @@ async def ask_question(request: ChatRequest):
         }
         
         # If chat_history was provided in request, use it as base and add current turn
-        if request.chat_history:
+        if request.chat_history is not None:
             conversation_history[request.user_id] = request.chat_history[-9:] + [current_turn]
         else:
             conversation_history[request.user_id].append(current_turn)
