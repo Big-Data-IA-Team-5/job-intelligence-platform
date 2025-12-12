@@ -277,13 +277,12 @@ class AirtableJobScraper:
         if not text or len(text) > 100 or len(text) < 2:
             return False
         
-        # Exclude locations (city, state pattern)
-        import re
-        if re.search(r',\s*[A-Z]{2}$', text):  # Ends with ", XX" (state abbreviation)
+        # Check if it's a location first - locations are NOT companies
+        if self.is_likely_location(text):
             return False
         
         # Exclude common non-company words
-        exclude = ['apply', 'remote', 'hybrid', 'on-site', 'onsite', 'on site']
+        exclude = ['apply', 'remote', 'hybrid', 'on-site', 'onsite', 'on site', 'international']
         if text.lower() in exclude:
             return False
         
@@ -346,6 +345,9 @@ class AirtableJobScraper:
                     driver = webdriver.Chrome(options=chrome_options)
                     with self.lock:
                         logger.info("✓ Chrome driver initialized (headless) for worker")
+                
+                # Set page load timeout to prevent infinite hangs
+                driver.set_page_load_timeout(120)  # 2 minutes max for page load
                 
                 jobs = []
                 date_samples = []

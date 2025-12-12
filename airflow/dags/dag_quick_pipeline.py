@@ -7,7 +7,6 @@ Duration: ~5-10 minutes
 """
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.operators.bash import BashOperator
 from datetime import datetime, timedelta
 import pendulum
 import sys
@@ -43,13 +42,12 @@ def test_scrape_jobs(**context):
     hours_lookback = 96       # Last 4 days to ensure we get some jobs
     num_workers = 1           # Single worker for predictable testing
     test_categories = [
-        'Software_Engineering',
         'Data_Engineer'
-    ]  # Only 2 categories instead of 21
+    ]  # Only 1 category for fastest testing
     
     print(f"\n⚙️  Test Configuration:")
     print(f"   Time window: Last {hours_lookback} hours")
-    print(f"   Categories: {len(test_categories)} (for quick testing)")
+    print(f"   Categories: {len(test_categories)} (fastest test)")
     print(f"   Workers: {num_workers}")
     
     # Initialize scraper
@@ -97,6 +95,7 @@ def test_upload_to_snowflake(**context):
     
     import json
     import snowflake.connector
+    from common.snowflake_utils import upload_to_snowflake
     
     print("=" * 80)
     print("🧪 TEST UPLOAD TO SNOWFLAKE")
@@ -131,7 +130,7 @@ def test_upload_to_snowflake(**context):
 
 def test_print_summary(**context):
     """Print test pipeline summary"""
-    from dags.common.snowflake_utils import load_secrets
+    from common.snowflake_utils import load_secrets
     import snowflake.connector
     
     print("=" * 80)
@@ -211,7 +210,8 @@ with DAG(
     # Task 1: Test scrape (2 categories, 1 worker)
     scrape_task = PythonOperator(
         task_id='test_scrape_jobs',
-        python_callable=test_scrape_jobs
+        python_callable=test_scrape_jobs,
+        execution_timeout=timedelta(minutes=15)  # Explicit timeout for slow page loads
     )
     
     # Task 2: Upload to Snowflake
@@ -220,17 +220,11 @@ with DAG(
         python_callable=test_upload_to_snowflake
     )
     
-    # Task 3: Run DBT transformations (includes embedding generation)
-    dbt_task = BashOperator(
-        task_id='test_run_dbt',
-        bash_command='export PATH="/home/airflow/.local/bin:$PATH" && cd /opt/airflow/dbt && dbt run --profiles-dir . --target prod'
-    )
-    
-    # Task 4: Print summary
+    # Task 3: Print summary (DBT runs independently in dag_dbt_transformations)
     summary_task = PythonOperator(
         task_id='test_print_summary',
         python_callable=test_print_summary
     )
     
-    # Define task dependencies
-    scrape_task >> upload_task >> dbt_task >> summary_task
+    # Define task dependencies (DBT now runs as separate DAG)
+    scrape_task >> upload_task >> summary_task

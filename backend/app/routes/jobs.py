@@ -30,6 +30,7 @@ class JobFilters(BaseModel):
     posted_within_days: Optional[int] = None  # 1, 7, 30
     job_types: Optional[List[str]] = None
     sort_by: Optional[str] = "most_recent"  # most_recent, highest_salary, company_az, h1b_rate
+    limit: Optional[int] = 50  # Number of results to return (default 50, max 500)
 
 
 class JobsResponse(BaseModel):
@@ -181,6 +182,9 @@ Be concise, max 5 items per category."""
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
         
+        # Validate and cap limit
+        limit = min(filters.limit or 50, 500)  # Max 500 results
+        
         # Build ORDER BY clause
         order_by_map = {
             "most_recent": "scraped_at DESC",
@@ -228,10 +232,10 @@ Be concise, max 5 items per category."""
             FROM jobs_processed
             {where_sql}
             ORDER BY {order_by}
-            LIMIT 50
+            LIMIT {limit}
         """
         
-        logger.info(f"Executing jobs search query: {query[:200]}...")
+        logger.info(f"Executing jobs search query with limit={limit}: {query[:200]}...")
         cursor.execute(query)
         
         columns = [col[0].lower() for col in cursor.description]

@@ -6,7 +6,6 @@ Schedule: Weekly on Mondays at 1 AM UTC
 """
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 from datetime import datetime, timedelta
 import pendulum
@@ -28,124 +27,199 @@ default_args = {
 }
 
 def scrape_fortune500_jobs(**context):
-    """Scrape jobs from Fortune 500 companies"""
-    # Load code from GCS
-    bucket = get_composer_bucket()
-    paths = setup_code_dependencies(bucket)
+    """Scrape jobs from Fortune 500 companies with full error handling and real-time output"""
+    import signal
+    import sys
+    import traceback
     
-    from scrapers.Fortune_500 import UltraSmartScraper, scrape_single_company, ProgressManager
-    from dags.common.snowflake_utils import load_secrets
-    from dags.common.s3_utils import cleanup_old_s3_files
-    import pandas as pd
-    from concurrent.futures import ThreadPoolExecutor
+    def timeout_handler(signum, frame):
+        print("\n⏱️  TIMEOUT: Scraper exceeded 8-hour limit")
+        raise TimeoutError("Scraper timeout after 8 hours")
     
-    print("=" * 80)
-    print("STEP 1: SCRAPING FORTUNE 500 COMPANIES")
-    print("=" * 80)
-    
-    # Clean up old files first (files older than 30 days)
-    print("\nCleaning up old S3 files...")
-    cleanup_old_s3_files(prefix='raw/fortune500/', days_to_keep=30)
-    
-    # Get OpenAI API key from secrets
-    secrets = load_secrets()
-    openai_key = secrets['api']['openai_api_key']
-    if not openai_key:
-        raise ValueError("OpenAI API key not found in secrets.json")
-    
-    # Initialize scraper - DISABLE SELENIUM for parallel processing
-    # Selenium is NOT thread-safe and causes massive slowdowns with ThreadPoolExecutor
-    scraper = UltraSmartScraper(
-        openai_key=openai_key,
-        use_selenium=False  # HTTP-only mode for 10x faster parallel scraping
-    )
-    
-    # Initialize progress manager
-    progress = ProgressManager()
-    
-    # Load companies from CSV
-    # Check Docker mount first, then local path
-    csv_path = '/opt/airflow/data/fortune500_career_pages_validated.csv'
-    if not os.path.exists(csv_path):
-        csv_path = os.path.join(
-            os.path.dirname(__file__),
-            '../../data/fortune500_career_pages_validated.csv'
-        )
-    
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Fortune 500 CSV not found at: {csv_path}")
-    
-    companies = []
-    with open(csv_path, 'r', encoding='utf-8') as f:
-        reader = pd.read_csv(f)
-        for _, row in reader.iterrows():
-            companies.append({
-                'name': row['company_name'],
-                'url': row['final_career_url']
-            })
-    
-    # Filter out completed companies - PRODUCTION OPTIMIZED
-    companies_to_scrape = [
-        c for c in companies 
-        if not progress.is_completed(c['name'])
-    ][:200]  # Scrape 200 companies per run (increased from 50)
-    
-    print(f"\n⚙️  Configuration:")
-    print(f"   Total companies in CSV: {len(companies)}")
-    print(f"   Companies to scrape: {len(companies_to_scrape)}")
-    print(f"   Max workers: 16")  # 16 workers for FAST scraping of 500 companies!
-    print(f"   Time window: Last 15 days")
-    
-    all_jobs = []
-    
-    # Scrape companies in parallel - PRODUCTION OPTIMIZED
     try:
-        with ThreadPoolExecutor(max_workers=8) as executor:  # Using 8 workers for optimal performance
-            futures = []
-            for idx, company_info in enumerate(companies_to_scrape):
-                future = executor.submit(
-                    scrape_single_company,
-                    company_info,
-                    scraper,
-                    progress,
-                    idx
-                )
-                futures.append(future)
-            
-            # Collect results
-            for future in futures:
-                try:
-                    result = future.result(timeout=300)  # 5 min timeout per company (HTTP-only is fast)
-                    if result['success'] and result['jobs']:
-                        all_jobs.extend(result['jobs'])
-                        progress.save_progress(result['company'])
-                except Exception as e:
-                    print(f"⚠️  Company failed: {str(e)[:100]}")
+        # Set timeout to 8 hours (Fortune 500 needs more time, 8 workers)
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(28800)  # 8 hours for 8-worker Fortune 500 scrape
+        
+        # Load code from GCS
+        print("\n" + "="*80)
+        print("LOADING GCS DEPENDENCIES")
+        print("="*80)
+        sys.stdout.flush()
+        
+        bucket = get_composer_bucket()
+        print(f"✅ Using bucket: {bucket}")
+        sys.stdout.flush()
+        
+        paths = setup_code_dependencies(bucket)
+        print(f"✅ Paths loaded: {paths}")
+        sys.stdout.flush()
+        
+        from scrapers.Fortune_500 import UltraSmartScraper, scrape_single_company, ProgressManager
+        from common.snowflake_utils import load_secrets
+        from common.s3_utils import cleanup_old_s3_files
+        import pandas as pd
+        from concurrent.futures import ThreadPoolExecutor
+        
+        print("=" * 80)
+        print("STEP 1: SCRAPING FORTUNE 500 COMPANIES")
+        print("=" * 80)
+        sys.stdout.flush()
+        
+        print("\nCleaning up old S3 files...")
+        sys.stdout.flush()
+        cleanup_old_s3_files(prefix='raw/fortune500/', days_to_keep=30)
+        
+        print("\n🔐 Loading secrets...")
+        sys.stdout.flush()
+        secrets = load_secrets()
+        openai_key = secrets['api']['openai_api_key']
+        if not openai_key:
+            raise ValueError("OpenAI API key not found in secrets.json")
+        print("✅ Secrets loaded")
+        sys.stdout.flush()
+        
+        # Initialize scraper - DISABLE SELENIUM for parallel processing
+        # Selenium is NOT thread-safe and causes massive slowdowns with ThreadPoolExecutor
+        print("\n🔧 Initializing scraper...")
+        sys.stdout.flush()
+        scraper = UltraSmartScraper(
+            openai_key=openai_key,
+            use_selenium=False  # HTTP-only mode for 10x faster parallel scraping
+        )
+        print("✅ Scraper initialized (HTTP-only mode for 8-worker parallel)")
+        sys.stdout.flush()
+        
+        # Initialize progress manager
+        progress = ProgressManager()
+        
+        # Download CSV from GCS if not exists locally
+        csv_path = '/tmp/airflow_code/fortune500_career_pages_validated.csv'
+        if not os.path.exists(csv_path):
+            print("\n📥 Downloading Fortune 500 CSV from GCS...")
+            sys.stdout.flush()
+            from google.cloud import storage
+            client = storage.Client()
+            bucket_obj = client.bucket(bucket.replace('gs://', ''))
+            blob = bucket_obj.blob('data/fortune500_career_pages_validated.csv')
+            blob.download_to_filename(csv_path)
+            print(f"✅ Downloaded Fortune 500 CSV from GCS")
+            sys.stdout.flush()
+        
+        print("\n📖 Reading company list...")
+        sys.stdout.flush()
+        companies = []
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = pd.read_csv(f)
+            for _, row in reader.iterrows():
+                companies.append({
+                    'name': row['company_name'],
+                    'url': row['final_career_url']
+                })
+        
+        # Filter out completed companies - PRODUCTION OPTIMIZED
+        companies_to_scrape = [
+            c for c in companies 
+            if not progress.is_completed(c['name'])
+        ][:200]  # Scrape 200 companies per run (increased from 50)
+        
+        print(f"\n⚙️  Configuration:")
+        print(f"   Total companies in CSV: {len(companies)}")
+        print(f"   Companies to scrape: {len(companies_to_scrape)}")
+        print(f"   Max workers: 8 (optimized for Fortune 500 HTTP-only)")
+        print(f"   Time window: Last 15 days")
+        print(f"   Timeout: 8 hours")
+        sys.stdout.flush()
+        
+        all_jobs = []
+        successful_companies = 0
+        failed_companies = 0
+        
+        # Scrape companies in parallel - PRODUCTION OPTIMIZED
+        print("\n🚀 Starting scraper with 8 workers...")
+        sys.stdout.flush()
+        try:
+            with ThreadPoolExecutor(max_workers=8) as executor:  # 8 workers for Fortune 500
+                futures = []
+                for idx, company_info in enumerate(companies_to_scrape):
+                    future = executor.submit(
+                        scrape_single_company,
+                        company_info,
+                        scraper,
+                        progress,
+                        idx
+                    )
+                    futures.append(future)
+                
+                # Collect results
+                for idx, future in enumerate(futures):
+                    try:
+                        result = future.result(timeout=300)  # 5 min timeout per company (HTTP-only is fast)
+                        if result['success'] and result['jobs']:
+                            all_jobs.extend(result['jobs'])
+                            progress.save_progress(result['company'])
+                            successful_companies += 1
+                            if (idx + 1) % 10 == 0:
+                                print(f"✅ Progress: {idx + 1}/{len(futures)} companies")
+                                sys.stdout.flush()
+                        else:
+                            failed_companies += 1
+                    except Exception as e:
+                        failed_companies += 1
+                        print(f"⚠️  Company {idx + 1} failed: {str(e)[:100]}")
+                        sys.stdout.flush()
+        
+        finally:
+            # Cleanup Selenium drivers
+            print("\n🧹 Cleaning up resources...")
+            sys.stdout.flush()
+            if hasattr(scraper, 'http') and hasattr(scraper.http, 'cleanup_driver'):
+                scraper.http.cleanup_driver()
+        
+        # Cancel timeout
+        signal.alarm(0)
+        
+        print("\n" + "=" * 80)
+        print("SCRAPING COMPLETED SUCCESSFULLY")
+        print("=" * 80)
+        print(f"\n📊 Results:")
+        print(f"   Total jobs scraped: {len(all_jobs)}")
+        print(f"   Successful companies: {successful_companies}")
+        print(f"   Failed companies: {failed_companies}")
+        sys.stdout.flush()
+        
+        # Push to XCom for next tasks
+        context['ti'].xcom_push(key='fortune500_jobs', value=all_jobs)
+        context['ti'].xcom_push(key='job_count', value=len(all_jobs))
+        
+        return len(all_jobs)
     
-    finally:
-        # Cleanup Selenium drivers
-        print("\n🧹 Cleaning up Selenium drivers...")
-        if hasattr(scraper, 'http') and hasattr(scraper.http, 'cleanup_driver'):
-            scraper.http.cleanup_driver()
-    
-    print("\n" + "=" * 80)
-    print("SCRAPING COMPLETED")
-    print("=" * 80)
-    print(f"\n📊 Results:")
-    print(f"   Total jobs scraped: {len(all_jobs)}")
-    print(f"   Companies processed: {len(companies_to_scrape)}")
-    
-    # Push to XCom for next tasks
-    context['ti'].xcom_push(key='fortune500_jobs', value=all_jobs)
-    context['ti'].xcom_push(key='job_count', value=len(all_jobs))
-    
-    return len(all_jobs)
+    except TimeoutError as e:
+        print(f"\n⏱️  TIMEOUT ERROR after 8 hours: {str(e)}")
+        print(traceback.format_exc())
+        sys.stdout.flush()
+        raise
+    except Exception as e:
+        print(f"\n❌ ERROR in scrape_fortune500_jobs: {str(e)}")
+        print(traceback.format_exc())
+        
+        print("\n" + "=" * 80)
+        print("FULL ERROR DETAILS:")
+        print("=" * 80)
+        import sys as sys_module
+        exc_type, exc_value, exc_traceback = sys_module.exc_info()
+        print(f"Type: {exc_type}")
+        print(f"Value: {exc_value}")
+        print(f"Traceback:")
+        print(traceback.format_exc())
+        sys.stdout.flush()
+        raise
 
 def upload_fortune500_jobs_to_s3(**context):
     """
     Upload scraped Fortune 500 jobs to S3
     """
-    from dags.common.s3_utils import upload_to_s3
+    from common.s3_utils import upload_to_s3
     import pandas as pd
     
     print("\n" + "=" * 80)
@@ -173,7 +247,7 @@ def upload_fortune500_jobs_to_snowflake(**context):
     """
     Upload scraped Fortune 500 jobs to Snowflake
     """
-    from dags.common.snowflake_utils import upload_to_snowflake
+    from common.snowflake_utils import upload_to_snowflake
     
     print("\n" + "=" * 80)
     print("STEP 3: UPLOADING TO SNOWFLAKE")
@@ -229,6 +303,7 @@ with DAG(
         task_id='scrape_fortune500_jobs',
         python_callable=scrape_fortune500_jobs,
         provide_context=True,
+        execution_timeout=timedelta(minutes=30),  # Explicit timeout for Fortune 500 (longer due to multiple sites)
     )
     
     # Task 2: Upload to S3
@@ -245,23 +320,14 @@ with DAG(
         provide_context=True,
     )
     
-    # Task 4: Run dbt transformations (transforms raw -> processed)
-    # Includes: classified_jobs, embedded_jobs (generates embeddings), jobs_processed
-    dbt_task = BashOperator(
-        task_id='run_dbt_transformations',
-        bash_command='export PATH="/home/airflow/.local/bin:$PATH" && cd /opt/airflow/dbt && dbt run --profiles-dir . --target prod',
-        env={
-            'DBT_PROFILES_DIR': '/opt/airflow/dbt',
-        },
-        trigger_rule='all_done',  # Continue even if previous tasks fail
-    )
-    
-    # Task 5: Print summary
+    # Task 4: Print summary
+    # Note: DBT transformations now run independently in dag_dbt_transformations
     summary_task = PythonOperator(
         task_id='print_summary',
         python_callable=print_pipeline_summary,
         provide_context=True,
     )
     
-    # Pipeline: Scrape -> S3 -> Snowflake -> dbt (includes embeddings) -> Summary
-    scrape_task >> s3_task >> snowflake_task >> dbt_task >> summary_task
+    # Pipeline: Scrape -> S3 -> Snowflake -> Summary
+    # DBT transformations run independently every 6 hours in dag_dbt_transformations
+    scrape_task >> s3_task >> snowflake_task >> summary_task

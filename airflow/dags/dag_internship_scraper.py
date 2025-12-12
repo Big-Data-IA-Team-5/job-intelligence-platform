@@ -6,7 +6,6 @@ Pipeline: Scrape -> S3 Upload -> Snowflake Upload
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.operators.bash import BashOperator
 from airflow.utils.dates import days_ago
 from datetime import datetime, timedelta
 import pendulum
@@ -30,69 +29,126 @@ default_args = {
 
 def scrape_internship_jobs(**context):
     """
-    Scrape all internship categories from Airtable
+    Scrape all internship categories from Airtable with full error handling
     """
-    # Load code from GCS
-    bucket = get_composer_bucket()
-    paths = setup_code_dependencies(bucket)
+    import signal
+    import sys
+    import traceback
     
-    from scrapers.Internship_Airtable_scraper import InternshipAirtableScraper
-    from dags.common.s3_utils import cleanup_old_s3_files
+    def timeout_handler(signum, frame):
+        print("\n⏱️  TIMEOUT: Scraper exceeded 45-minute limit")
+        raise TimeoutError("Scraper timeout after 45 minutes")
     
-    print("=" * 80)
-    print("STEP 1: SCRAPING INTERNSHIPS FROM AIRTABLE")
-    print("=" * 80)
+    try:
+        # Set timeout to 45 minutes
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(2700)  # 45 minutes
+        
+        # Load code from GCS
+        print("\n" + "="*80)
+        print("LOADING GCS DEPENDENCIES")
+        print("="*80)
+        sys.stdout.flush()
+        
+        bucket = get_composer_bucket()
+        print(f"✅ Using bucket: {bucket}")
+        sys.stdout.flush()
+        
+        paths = setup_code_dependencies(bucket)
+        print(f"✅ Paths loaded: {paths}")
+        sys.stdout.flush()
+        
+        from scrapers.Internship_Airtable_scraper import InternshipAirtableScraper
+        from common.s3_utils import cleanup_old_s3_files
+        
+        print("=" * 80)
+        print("STEP 1: SCRAPING INTERNSHIPS FROM AIRTABLE")
+        print("=" * 80)
+        sys.stdout.flush()
+        
+        print("\nCleaning up old S3 files...")
+        sys.stdout.flush()
+        cleanup_old_s3_files(prefix='raw/airtable/internships/', days_to_keep=30)
+        
+        hours_lookback = 360
+        num_workers = 1  # 1 worker for Composer (Selenium resource limits)
+        
+        print(f"\n⚙️  Configuration:")
+        print(f"   Time window: Last {hours_lookback} hours ({hours_lookback/24:.0f} days)")
+        print(f"   Workers: {num_workers}")
+        print(f"   Max timeout: 45 minutes")
+        sys.stdout.flush()
+        
+        # Initialize scraper
+        print("\n🔧 Initializing scraper...")
+        sys.stdout.flush()
+        scraper = InternshipAirtableScraper(
+            hours_lookback=hours_lookback,
+            num_workers=num_workers,
+            max_retries=2
+        )
+        print("✅ Scraper initialized")
+        sys.stdout.flush()
+        
+        # Run scraper
+        print(f"\n🚀 Starting internship scraper...")
+        sys.stdout.flush()
+        results = scraper.scrape_all_categories()
+        
+        # Collect all jobs
+        print(f"\n📦 Collecting results...")
+        sys.stdout.flush()
+        all_jobs = scraper.all_jobs
+        
+        # Summary
+        total_jobs = len(all_jobs)
+        successful = sum(1 for r in results.values() if r.get('status') == 'success')
+        failed = sum(1 for r in results.values() if r.get('status') == 'failed')
+        
+        print("\n" + "=" * 80)
+        print("SCRAPING COMPLETED SUCCESSFULLY")
+        print("=" * 80)
+        print(f"\n📊 Results:")
+        print(f"   Total internships: {total_jobs}")
+        print(f"   Successful categories: {successful}/{len(results)}")
+        print(f"   Failed categories: {failed}/{len(results)}")
+        sys.stdout.flush()
+        
+        # Cancel timeout
+        signal.alarm(0)
+        
+        # Push to XCom for next tasks
+        context['ti'].xcom_push(key='internship_jobs', value=all_jobs)
+        context['ti'].xcom_push(key='job_count', value=total_jobs)
+        
+        return total_jobs
     
-    # Clean up old S3 files first (files older than 30 days)
-    print("\nCleaning up old S3 files...")
-    cleanup_old_s3_files(prefix='raw/airtable/internships/', days_to_keep=30)
-    
-    # Configuration - PRODUCTION OPTIMIZED
-    hours_lookback = 360  # 15 days (extended to get more job data)
-    num_workers = 3       # 3 parallel workers (reduced to prevent Selenium Grid overload)
-    
-    print(f"\n⚙️  Configuration:")
-    print(f"   Time window: Last {hours_lookback} hours ({hours_lookback/24:.0f} days)")
-    print(f"   Workers: {num_workers}")
-    
-    # Initialize scraper
-    scraper = InternshipAirtableScraper(
-        hours_lookback=hours_lookback,
-        num_workers=num_workers,
-        max_retries=3
-    )
-    
-    # Run scraper
-    print(f"\n🚀 Starting internship scraper...")
-    results = scraper.scrape_all_categories()
-    
-    # Collect all jobs
-    all_jobs = scraper.all_jobs
-    
-    # Summary
-    total_jobs = len(all_jobs)
-    successful = sum(1 for r in results.values() if r.get('status') == 'success')
-    failed = sum(1 for r in results.values() if r.get('status') == 'failed')
-    
-    print("\n" + "=" * 80)
-    print("SCRAPING COMPLETED")
-    print("=" * 80)
-    print(f"\n📊 Results:")
-    print(f"   Total internships: {total_jobs}")
-    print(f"   Successful categories: {successful}/{len(results)}")
-    print(f"   Failed categories: {failed}/{len(results)}")
-    
-    # Push to XCom for next tasks
-    context['ti'].xcom_push(key='internship_jobs', value=all_jobs)
-    context['ti'].xcom_push(key='job_count', value=total_jobs)
-    
-    return total_jobs
+    except TimeoutError as e:
+        print(f"\n⏱️  TIMEOUT ERROR: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        raise
+    except Exception as e:
+        print(f"\n❌ ERROR in scrape_internship_jobs: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        
+        print("\n" + "=" * 80)
+        print("FULL ERROR DETAILS:")
+        print("=" * 80)
+        import sys as sys_module
+        exc_type, exc_value, exc_traceback = sys_module.exc_info()
+        print(f"Type: {exc_type}")
+        print(f"Value: {exc_value}")
+        print(f"Traceback: {traceback.format_exc()}")
+        sys.stdout.flush()
+        raise
 
 def upload_internship_jobs_to_s3(**context):
     """
     Upload scraped internship jobs to S3
     """
-    from dags.common.s3_utils import upload_to_s3
+    from common.s3_utils import upload_to_s3
     
     print("\n" + "=" * 80)
     print("STEP 2: UPLOADING TO S3")
@@ -119,7 +175,7 @@ def upload_internship_jobs_to_snowflake(**context):
     """
     Upload scraped internship jobs to Snowflake
     """
-    from dags.common.snowflake_utils import upload_to_snowflake
+    from common.snowflake_utils import upload_to_snowflake
     
     print("\n" + "=" * 80)
     print("STEP 3: UPLOADING TO SNOWFLAKE")
@@ -175,6 +231,7 @@ with DAG(
         task_id='scrape_internship_jobs',
         python_callable=scrape_internship_jobs,
         provide_context=True,
+        execution_timeout=timedelta(minutes=20),  # Explicit timeout for slow page loads
     )
     
     # Task 2: Upload to S3
@@ -191,23 +248,14 @@ with DAG(
         provide_context=True,
     )
     
-    # Task 4: Run dbt transformations (transforms raw -> processed)
-    # Includes: classified_jobs, embedded_jobs (generates embeddings), jobs_processed
-    dbt_task = BashOperator(
-        task_id='run_dbt_transformations',
-        bash_command='export PATH="/home/airflow/.local/bin:$PATH" && cd /opt/airflow/dbt && dbt run --profiles-dir . --target prod',
-        env={
-            'DBT_PROFILES_DIR': '/opt/airflow/dbt',
-        },
-        trigger_rule='all_done',  # Continue even if previous tasks fail
-    )
-    
-    # Task 5: Print summary
+    # Task 4: Print summary
+    # Note: DBT transformations now run independently in dag_dbt_transformations
     summary_task = PythonOperator(
         task_id='print_summary',
         python_callable=print_pipeline_summary,
         provide_context=True,
     )
     
-    # Pipeline: Scrape -> S3 -> Snowflake -> dbt (includes embeddings) -> Summary
-    scrape_task >> s3_task >> snowflake_task >> dbt_task >> summary_task
+    # Pipeline: Scrape -> S3 -> Snowflake -> Summary
+    # DBT transformations run independently every 6 hours in dag_dbt_transformations
+    scrape_task >> s3_task >> snowflake_task >> summary_task

@@ -1266,6 +1266,7 @@ class EnhancedFallbackChain:
         
         try:
             driver = self.http.driver
+            driver.set_page_load_timeout(120)  # 2 minutes max for page load
             driver.get(career_url)
             
             # Wait for initial load
@@ -1415,6 +1416,7 @@ class HTTPClient:
                 return None
         
         try:
+            self.driver.set_page_load_timeout(120)  # 2 minutes max for page load
             self.driver.get(url)
             
             # Wait for page to load

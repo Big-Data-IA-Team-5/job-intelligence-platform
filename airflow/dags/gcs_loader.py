@@ -81,13 +81,20 @@ def get_composer_bucket():
     # In Composer, this is available via environment variable
     bucket = os.getenv('GCS_BUCKET')
     if bucket:
+        print(f"✅ Using GCS_BUCKET env var: {bucket}")
         return bucket
     
-    # Fallback: derive from DAGS folder
+    # Fallback: derive from DAGS folder path
     dags_folder = os.getenv('AIRFLOW__CORE__DAGS_FOLDER', '')
-    if 'gs://' in dags_folder:
+    print(f"🔍 AIRFLOW__CORE__DAGS_FOLDER: {dags_folder}")
+    
+    if dags_folder and 'gs://' in dags_folder:
         # Extract bucket from gs://bucket-name/dags
         bucket = dags_folder.split('/dags')[0]
+        print(f"✅ Extracted bucket from DAGS_FOLDER: {bucket}")
         return bucket
     
-    raise ValueError("Could not determine Composer GCS bucket")
+    # Fallback: hardcoded bucket for known Composer environment
+    fallback_bucket = 'gs://us-central1-job-intel-airfl-d2b0ae78-bucket'
+    print(f"⚠️  Using fallback bucket: {fallback_bucket}")
+    return fallback_bucket

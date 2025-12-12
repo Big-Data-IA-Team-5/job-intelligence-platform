@@ -312,7 +312,7 @@ if h1b_sponsors_data:
     
     fig_sponsors.add_trace(go.Scatter(
         x=sponsors_df.index,
-        y=sponsors_df['avg_approval_rate'] * 100,
+        y=sponsors_df['avg_approval_rate'],
         mode='markers',
         marker=dict(
             size=sponsors_df['bubble_size'],
@@ -351,15 +351,15 @@ if h1b_sponsors_data:
         st.markdown("#### 🎯 Top 10 H-1B Sponsors")
         display_sponsors = sponsors_df[['company', 'job_count', 'avg_approval_rate']].head(10).copy()
         display_sponsors['avg_approval_rate'] = display_sponsors['avg_approval_rate'].apply(
-            lambda x: f"{x*1:.1f}%" if x else "N/A"
+            lambda x: f"{x:.1f}%" if x else "N/A"
         )
         display_sponsors.columns = ['Company', 'Open Jobs', 'Approval Rate']
         st.dataframe(display_sponsors, use_container_width=True, hide_index=True)
     
     with col2:
         st.markdown("#### 📊 Sponsorship Stats")
-        high_approval = len(sponsors_df[sponsors_df['avg_approval_rate'] >= 0.95])
-        avg_rate = sponsors_df['avg_approval_rate'].mean() * 100
+        high_approval = len(sponsors_df[sponsors_df['avg_approval_rate'] >= 95])
+        avg_rate = sponsors_df['avg_approval_rate'].mean()
         total_sponsor_jobs = sponsors_df['job_count'].sum()
         
         st.markdown(f"""

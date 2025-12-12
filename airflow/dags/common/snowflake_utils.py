@@ -57,11 +57,15 @@ def escape_json_for_sql(json_str):
 
 def load_secrets():
     """Load secrets from secrets.json file"""
-    # Try Docker mount locations first, then local development path
+    # Try Composer/GCS download location first (from setup_code_dependencies)
+    composer_path = Path('/tmp/airflow_code/secrets.json')
+    # Then Docker mount locations
     docker_path = Path('/opt/airflow/secrets/secrets.json')
     docker_path_alt = Path('/opt/airflow/secrets.json')
     
-    if docker_path.exists():
+    if composer_path.exists():
+        secrets_path = composer_path
+    elif docker_path.exists():
         secrets_path = docker_path
     elif docker_path_alt.exists():
         secrets_path = docker_path_alt

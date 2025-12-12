@@ -206,10 +206,11 @@ class ComprehensiveAirtableScraper:
         if not text or len(text) > 100 or len(text) < 2:
             return False
         
-        if re.search(r',\s*[A-Z]{2}$', text):
+        # Check if it's a location first - locations are NOT companies
+        if self.is_likely_location(text):
             return False
         
-        exclude = ['apply', 'remote', 'hybrid', 'on-site', 'onsite', 'on site']
+        exclude = ['apply', 'remote', 'hybrid', 'on-site', 'onsite', 'on site', 'international']
         if text.lower() in exclude:
             return False
         
@@ -320,6 +321,9 @@ class ComprehensiveAirtableScraper:
                             driver = webdriver.Chrome(options=chrome_options)
                             with self.lock:
                                 logger.info("✓ Chrome driver initialized from chromedriver-binary package")
+                    
+                    # Set page load timeout to prevent infinite hangs
+                    driver.set_page_load_timeout(120)  # 2 minutes max for page load
                     
                     with self.lock:
                         logger.info(f"\n🌐 Loading {url}...")

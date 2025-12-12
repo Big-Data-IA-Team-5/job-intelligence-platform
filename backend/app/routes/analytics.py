@@ -11,7 +11,7 @@ from app.utils.agent_wrapper import AgentManager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/analytics", tags=["analytics"])
+router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
 class TrendPoint(BaseModel):

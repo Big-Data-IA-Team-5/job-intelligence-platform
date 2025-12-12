@@ -35,7 +35,7 @@ def load_h1b_data(**context):
     paths = setup_code_dependencies(bucket)
     
     import pandas as pd
-    from dags.common.s3_utils import cleanup_old_s3_files
+    from common.s3_utils import cleanup_old_s3_files
     
     print("=" * 80)
     print("STEP 1: LOADING H-1B CSV FILE")
@@ -112,7 +112,7 @@ def upload_h1b_to_s3(**context):
     """
     Upload CSV file directly to S3 (OPTIMIZED)
     """
-    from dags.common.s3_utils import get_s3_client, load_secrets
+    from common.s3_utils import get_s3_client, load_secrets
     
     print("\n" + "=" * 80)
     print("STEP 2: UPLOADING CSV TO S3")
@@ -151,7 +151,7 @@ def upload_h1b_to_snowflake(**context):
     """
     Load CSV directly to Snowflake using COPY INTO (OPTIMIZED - 10-50x faster)
     """
-    from dags.common.snowflake_utils import get_snowflake_connection, load_secrets
+    from common.snowflake_utils import get_snowflake_connection, load_secrets
     
     print("\n" + "=" * 80)
     print("STEP 3: LOADING CSV TO SNOWFLAKE (NATIVE COPY)")

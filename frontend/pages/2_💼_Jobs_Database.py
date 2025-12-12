@@ -240,12 +240,22 @@ if clear_filters:
     st.session_state.filters_applied = False
     st.rerun()
 
-# Sort options
+# Sort and Pagination options
 st.markdown("---")
-sort_by = st.selectbox(
-    "📊 Sort by",
-    options=['Most Recent', 'Highest Salary', 'Company (A-Z)', 'Best H-1B Rate']
-)
+col_sort, col_limit = st.columns([3, 1])
+
+with col_sort:
+    sort_by = st.selectbox(
+        "📊 Sort by",
+        options=['Most Recent', 'Highest Salary', 'Company (A-Z)', 'Best H-1B Rate']
+    )
+
+with col_limit:
+    results_limit = st.selectbox(
+        "📄 Results per page",
+        options=[50, 100, 200, 500],
+        index=0
+    )
 
 # Map sort options to API values
 sort_map = {
@@ -277,7 +287,8 @@ filter_request = {
     "salary_min": None,
     "salary_max": None,
     "posted_within_days": posted_days_map[posted_within],
-    "sort_by": sort_map[sort_by]
+    "sort_by": sort_map[sort_by],
+    "limit": results_limit
 }
 
 # Search jobs with filters
@@ -342,11 +353,8 @@ else:
         
         display_df['Posted'] = display_df.apply(format_posted_date, axis=1)
         
-        # Keep raw URL for LinkColumn (no markdown formatting)
-        display_df['Apply'] = display_df['url']
-        
         # Select only needed columns
-        table_cols = ['title', 'company', 'location', 'Salary', 'work_model', 'H-1B', 'job_type', 'Posted', 'Apply']
+        table_cols = ['title', 'company', 'location', 'Salary', 'work_model', 'H-1B', 'job_type', 'Posted', 'url']
         available_cols = [col for col in table_cols if col in display_df.columns]
         
         # Rename for display
@@ -356,6 +364,7 @@ else:
             'location': '📍 Location',
             'work_model': '🏠 Work Model',
             'job_type': '📋 Type',
+            'url': '🎯 Apply'
         }
         
         final_df = display_df[available_cols].rename(columns=column_rename)
@@ -367,9 +376,10 @@ else:
             height=600,
             hide_index=True,
             column_config={
-                "Apply": st.column_config.LinkColumn(
-                    "🔗 Apply",
-                    display_text="Apply"
+                "🎯 Apply": st.column_config.LinkColumn(
+                    "🎯 Apply",
+                    help="Click to open job application page",
+                    width="medium"
                 )
             }
         )

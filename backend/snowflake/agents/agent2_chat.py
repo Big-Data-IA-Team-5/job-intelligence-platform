@@ -407,6 +407,30 @@ Respond ONLY with the JSON object, no other text."""
         
         logger.info(f"📊 Conversation State: {conv_state.get_context_summary()}")
         
+        # Guardrail 0: Detect and handle casual greetings
+        greeting_patterns = [
+            ('hey', 'Hey! 👋 How can I help you?'), 
+            ('hello', 'Hello! 👋 How can I help you?'),
+            ('hi', 'Hey! 👋 How can I help you?'),
+            ('howdy', 'Howdy! 🤠 How can I help you?'),
+            ('sup', 'Sup! 👋 How can I help you?'),
+            ('yo', 'Yo! 👋 How can I help you?'),
+            ('how are you', 'I\'m doing great! How can I help you?'),
+            ('how\'re you', 'I\'m doing great! How can I help you?'),
+            ('what\'s up', 'Not much! How can I help you?'),
+            ('whats up', 'Not much! How can I help you?'),
+        ]
+        
+        question_lower = question.strip().lower()
+        for pattern, response in greeting_patterns:
+            if question_lower.startswith(pattern) or question_lower == pattern:
+                return {
+                    "answer": response,
+                    "data": [],
+                    "confidence": 1.0,
+                    "debug_info": {"greeting_detected": True} if return_debug else None
+                }
+        
         # Guardrail 1: Empty or very short queries
         if not question or len(question.strip()) < 3:
             return {

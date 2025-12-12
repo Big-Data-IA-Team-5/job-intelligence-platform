@@ -35,26 +35,45 @@ def generate_embeddings(**context):
     print(f"🔍 Python path: {sys.path[:3]}")
     print(f"🔍 Current directory: {os.getcwd()}")
     
+    import signal
+    
+    def timeout_handler(signum, frame):
+        print("\n⏱️  TIMEOUT: Embedding generation exceeded 1-hour limit")
+        raise TimeoutError("Embedding generation timeout after 1 hour")
+    
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(3600)
+    
     try:
         from scripts.generate_embeddings import main
         
         print("=" * 80)
         print("🚀 STARTING EMBEDDING GENERATION")
         print("=" * 80)
+        sys.stdout.flush()
         
-        # Run the embedding generation
         result = main()
+        
+        signal.alarm(0)
         
         print("\n" + "=" * 80)
         print("✅ EMBEDDING GENERATION COMPLETED")
         print("=" * 80)
         print(f"\n📊 Result: {result}")
+        sys.stdout.flush()
         
         return result
+    except TimeoutError as e:
+        print(f"\n⏱️  TIMEOUT ERROR: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        raise
     except Exception as e:
-        print(f"❌ ERROR: {str(e)}")
+        print(f"\n❌ ERROR: {str(e)}")
         print(f"📁 Available directories in {airflow_home}:")
         print(os.listdir(airflow_home))
+        import traceback
+        print(traceback.format_exc())
         raise
 
 with DAG(
