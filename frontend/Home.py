@@ -224,10 +224,6 @@ if not st.session_state.messages:
             st.session_state.messages.append({"role": "user", "content": "Which companies sponsor H-1B?"})
             st.session_state.trigger_query = True
             st.rerun()
-        if st.button("🎯 Career advice", use_container_width=True):
-            st.session_state.messages.append({"role": "user", "content": "What skills for data science?"})
-            st.session_state.trigger_query = True
-            st.rerun()
 else:
     col1, col2, col3 = st.columns([5, 2, 1])
     with col1:

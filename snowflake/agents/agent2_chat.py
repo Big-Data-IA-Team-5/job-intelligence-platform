@@ -53,12 +53,12 @@ class JobIntelligenceAgent:
                             previous_location = potential_location.capitalize()
                 
                 history_section += f"\n**Previous search location:** {previous_location or 'Not specified'}\n\n"
-                history_section += """**IMPORTANT - Use conversation history to:**
-1. Resolve pronouns: "this company" → refer to company mentioned earlier
-2. Infer missing entities: "whom to contact" → use company from previous query  
-3. Understand follow-ups: "attorney" → if previous was about company X, find attorney for company X
-4. Track context: if user asked about Dassault, next queries likely about Dassault
-5. **DETECT "MORE" REQUESTS:** If user says "give me more", "show more", "find more" and previous had location → SET LOCATION TO NULL to expand search
+                history_section += """**Use conversation history ONLY for:**
+1. Pronoun resolution: "this company" → company from previous message
+2. "More" requests: "give me more" → use previous search criteria
+3. Vague follow-ups: "what about them?" → refer to previous context
+
+**DO NOT use history if current question is self-contained!**
 
 """
             
@@ -146,27 +146,35 @@ Based on the resume, extract relevant skills, experience, and preferences to per
 - filings_6mo, avg_wage_offered, is_violator, risk_level
 
 **Your Task:**
-Analyze this question and extract structured information: "{question}"
+USE YOUR LLM INTELLIGENCE to analyze this question: "{question}"
+
+**STEP 1: ANALYZE THE CURRENT QUESTION INDEPENDENTLY**
+Read the question with your full language understanding. Extract ALL information present in the question itself:
+- What intent is the user asking for? (job_search, salary_info, h1b_sponsorship, etc.)
+- What job title/role is mentioned? ("software engineer", "data analyst", "ML engineer")
+- What location is specified? ("Boston", "Seattle", "California", "remote")
+- What company is mentioned? ("Google", "Amazon", "Microsoft")
+- What are the key search terms?
+
+**STEP 2: ONLY USE CONTEXT IF CURRENT QUESTION IS VAGUE**
+Context should ONLY be used when:
+- User says "more" / "show more" / "give me more" → use previous search
+- User says "this company" / "that company" → look up company name from history
+- Question is incomplete: "what about them?" → need context
+
+**CRITICAL RULES:**
+1. If current question says "software jobs in Boston" → location = "Boston" (even if previous was "Seattle")
+2. If current question says "engineer jobs" → job_title = "Engineer" (even if previous was "Data Scientist")
+3. If current question is complete and clear → IGNORE conversation history completely
+4. Your intelligence can parse natural language - use it!
 
 Return a JSON object with:
 - intent: one of [job_search, salary_info, h1b_sponsorship, contact_info, company_comparison, resume_analysis, career_advice, general]
-- job_title: normalized job role (e.g., "Software Engineer", "Data Analyst", "Data Intern") OR null if user wants ANY jobs (e.g., "show me any jobs", "show me jobs", "list all jobs")
-- location: city or state (e.g., "Boston", "Seattle", "MA", "WA") OR null if not specified
-- company: company name if mentioned (single company) OR array of companies for comparison (e.g., ["Amazon", "Google"]) OR null
-- keywords: important search terms from the question
-- resume_skills: if resume provided, extract key technical skills (e.g., ["Python", "AWS", "Docker"])
-
-**CRITICAL RULES:**
-- Set job_title to null when user says "any jobs", "show me jobs", "list jobs", "all jobs" (generic searches)
-- Set job_title to null when user has resume and wants broad matching
-- Only set job_title to a specific role when user explicitly mentions it (e.g., "software engineer", "data analyst")
-- DO NOT guess or infer job_title when none is mentioned
-
-**Context-Aware Intelligence:**
-- If user has resume: extract technical skills and use them for matching (set job_title: null to search broadly)
-- If user says "more jobs": expand the previous search (remove location if it was too restrictive, keep skills)
-- If user references "this company" or "these companies": look at conversation history to identify them
-- If asking about follow-up: infer missing context from previous messages
+- job_title: normalized job role OR null if user wants ANY jobs or broad matching
+- location: city or state OR null if not specified in CURRENT question
+- company: company name OR null
+- keywords: important search terms from CURRENT question
+- resume_skills: if resume provided, extract key technical skills
 
 **Examples:**
 "looking for data related internship" → {{"intent": "job_search", "job_title": "Data Intern", "location": null, "company": null, "keywords": ["data", "internship"]}}
@@ -904,6 +912,11 @@ Respond ONLY with the JSON object, no other text."""
             # Enhance question with resume skills and company list if provided
             enhanced_question = question
             filters = {}
+            
+            # CRITICAL FIX: Add location to filters so Agent 1 uses it for SQL filtering
+            if location:
+                logger.info(f"📍 Filtering by location: {location}")
+                filters['location'] = location
             
             if resume_skills:
                 logger.info(f"🎯 Matching jobs with resume skills: {', '.join(resume_skills[:5])}")

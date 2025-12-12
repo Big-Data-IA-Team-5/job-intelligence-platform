@@ -18,7 +18,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 class JobFilters(BaseModel):
-    """Job search filters"""
+    """Job search filters - Updated 2025-12-12"""
     search: Optional[str] = None
     companies: Optional[List[str]] = None
     locations: Optional[List[str]] = None
@@ -30,14 +30,15 @@ class JobFilters(BaseModel):
     posted_within_days: Optional[int] = None  # 1, 7, 30
     job_types: Optional[List[str]] = None
     sort_by: Optional[str] = "most_recent"  # most_recent, highest_salary, company_az, h1b_rate
-    limit: Optional[int] = 50  # Number of results to return (default 50, max 500)
+    limit: Optional[int] = 50
 
 
 class JobsResponse(BaseModel):
     """Jobs response with metadata"""
     jobs: List[Dict[str, Any]]
-    total: int
-    filters_applied: Dict[str, Any]
+    total: int = 0
+    pagination: Dict[str, Any] = {}
+    filters_applied: Dict[str, Any] = {}
 
 
 @router.post("/search", response_model=JobsResponse)
@@ -83,10 +84,13 @@ async def search_jobs(filters: JobFilters = Body(...)):
                  OR LOWER(snippet) LIKE LOWER('%{search_term}%'))
             """)
 
-        # Company filter
+        # Company filter - use ILIKE for fuzzy matching (case-insensitive)
         if filters.companies and len(filters.companies) > 0:
-            companies_str = "', '".join([c.replace("'", "''") for c in filters.companies])
-            where_clauses.append(f"company IN ('{companies_str}')")
+            company_conditions = []
+            for company in filters.companies:
+                company_clean = company.replace("'", "''")
+                company_conditions.append(f"LOWER(company) LIKE LOWER('%{company_clean}%')")
+            where_clauses.append(f"({' OR '.join(company_conditions)})")
 
         # Location filter
         if filters.locations and len(filters.locations) > 0:
@@ -114,9 +118,10 @@ async def search_jobs(filters: JobFilters = Body(...)):
         if filters.salary_max and filters.salary_max < 500000:
             where_clauses.append(f"(salary_max <= {filters.salary_max} OR (salary_max IS NULL AND salary_min <= {filters.salary_max}))")
 
-        # Posted date filter
+        # Posted date filter - use days_since_posted for consistency with frontend display
+        # "Last 24 hours" (1 day) should include Today (0) and Yesterday (1)
         if filters.posted_within_days:
-            where_clauses.append(f"posted_date >= DATEADD(day, -{filters.posted_within_days}, CURRENT_DATE())")
+            where_clauses.append(f"(days_since_posted IS NOT NULL AND days_since_posted <= {filters.posted_within_days})")
 
         # Job type filter
         if filters.job_types and len(filters.job_types) > 0:
@@ -134,12 +139,14 @@ QUERY: "{filters.search}"
 Provide:
 1. Job titles (e.g., "software engineer" → ["Software Engineer", "SWE", "Developer"])
 2. Skills/technologies (e.g., "python" → ["Python", "Django", "Flask"])
-3. Related keywords
+3. Locations (e.g., "boston" → ["Boston", "Boston, MA"], "bay area" → ["San Francisco", "Palo Alto"])
+4. Related keywords
 
 Respond with JSON:
 {{
   "titles": ["title1", "title2"],
   "skills": ["skill1", "skill2"],
+  "locations": ["location1", "location2"],
   "keywords": ["word1", "word2"]
 }}
 
@@ -164,6 +171,17 @@ Be concise, max 5 items per category."""
                         semantic_data.get('skills', []) +
                         semantic_data.get('keywords', [])
                     )
+                    
+                    # Extract locations from search query
+                    extracted_locations = semantic_data.get('locations', [])
+                    if extracted_locations:
+                        location_conditions = []
+                        for loc in extracted_locations[:3]:
+                            loc_escaped = loc.replace("'", "''")
+                            location_conditions.append(f"LOWER(location) LIKE LOWER('%{loc_escaped}%')")
+                        where_clauses.append(f"({' OR '.join(location_conditions)})")
+                        logger.info(f"📍 LLM extracted locations: {extracted_locations}")
+                    
                     if all_terms:
                         search_conditions = []
                         for term in all_terms[:8]:
@@ -252,11 +270,20 @@ Be concise, max 5 items per category."""
                     job[col] = value
             jobs.append(job)
 
-        logger.info(f"✅ Found {len(jobs)} jobs matching filters")
+        # Get total count for pagination metadata
+        count_query = f"""
+            SELECT COUNT(*) as total
+            FROM jobs_processed
+            {where_sql}
+        """
+        cursor.execute(count_query)
+        total_count = cursor.fetchone()[0]
+        
+        logger.info(f"✅ Found {len(jobs)} jobs out of {total_count} total")
 
         return JobsResponse(
             jobs=jobs,
-            total=len(jobs),
+            total=total_count,
             filters_applied={
                 "search": filters.search,
                 "companies": filters.companies,

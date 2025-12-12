@@ -51,21 +51,29 @@ embedded AS (
         total_petitions,
         avg_approval_rate,
         
-        -- Generate embedding for job description (cast to VARIANT to avoid dbt VECTOR type parsing issue)
-        SNOWFLAKE.CORTEX.EMBED_TEXT_768(
-            'e5-base-v2',
-            CONCAT(
-                title, '. ',
-                company, '. ',
-                LEFT(description, 2000)
+        -- Generate embedding for job description (convert VECTOR to ARRAY, then to VARIANT for dbt compatibility)
+        TO_VARIANT(
+            TO_ARRAY(
+                SNOWFLAKE.CORTEX.EMBED_TEXT_768(
+                    'e5-base-v2',
+                    CONCAT(
+                        title, '. ',
+                        company, '. ',
+                        LEFT(description, 2000)
+                    )
+                )
             )
-        )::VARIANT AS description_embedding,
+        ) AS description_embedding,
         
-        -- Generate embedding for extracted skills (cast to VARIANT to avoid dbt VECTOR type parsing issue)
-        SNOWFLAKE.CORTEX.EMBED_TEXT_768(
-            'e5-base-v2',
-            COALESCE(extracted_skills, title)
-        )::VARIANT AS skills_embedding
+        -- Generate embedding for extracted skills (convert VECTOR to ARRAY, then to VARIANT for dbt compatibility)
+        TO_VARIANT(
+            TO_ARRAY(
+                SNOWFLAKE.CORTEX.EMBED_TEXT_768(
+                    'e5-base-v2',
+                    COALESCE(extracted_skills, title)
+                )
+            )
+        ) AS skills_embedding
         
     FROM jobs
 )

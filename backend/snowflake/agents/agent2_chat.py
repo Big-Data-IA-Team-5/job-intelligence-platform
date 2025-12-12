@@ -800,24 +800,31 @@ Respond ONLY with the JSON object, no other text."""
             results = cursor.fetchall()
 
             if not results:
-                # Try employer_intelligence
+                # Try to get summary from available data
                 sql2 = f"""
                 SELECT
-                    employer_original,
-                    sponsorship_score,
-                    approval_rate,
-                    total_filings
-                FROM processed.employer_intelligence
-                WHERE employer_clean ILIKE '%{company.upper()}%'
+                    employer_name,
+                    COUNT(*) as total_filings,
+                    SUM(CASE WHEN case_status = 'Certified' THEN 1 ELSE 0 END) as certified,
+                    SUM(CASE WHEN case_status = 'Denied' THEN 1 ELSE 0 END) as denied,
+                    ROUND(100.0 * SUM(CASE WHEN case_status = 'Certified' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) as approval_rate
+                FROM RAW.H1B_RAW
+                WHERE employer_name ILIKE '%{company}%'
+                GROUP BY employer_name
                 LIMIT 1
                 """
                 cursor.execute(sql2)
-                ei_results = cursor.fetchone()
+                summary_result = cursor.fetchone()
 
-                if ei_results:
+                if summary_result:
+                    employer = summary_result[0]
+                    total = summary_result[1]
+                    certified = summary_result[2]
+                    denied = summary_result[3]
+                    approval = summary_result[4]
                     return {
-                        "answer": f"**{ei_results[0]}** sponsors H-1B visas:\n\n- Sponsorship Score: {ei_results[1]}/100\n- Approval Rate: {ei_results[2]*100:.0f}%\n- Total Filings: {ei_results[3]}\n\n⚠️ Contact information not available in public records. Reach out through company HR or careers page.",
-                        "data": [{"employer": ei_results[0], "score": ei_results[1]}],
+                        "answer": f"**{employer}** H-1B Visa Sponsorship Summary:\n\n- Total Filings: {total:,}\n- Certified: {certified:,}\n- Denied: {denied:,}\n- Approval Rate: {approval:.1f}%\n\n✅ {employer} actively sponsors H-1B visas. Check their careers page for current openings!",
+                        "data": [{"employer": employer, "total_filings": total, "approval_rate": approval}],
                         "confidence": 0.7
                     }
                 else:
@@ -842,7 +849,7 @@ Respond ONLY with the JSON object, no other text."""
             if data[4] and data[5]:  # Attorney name
                 answer += f"**Name:** {data[4]} {data[5]}  \n"
             if data[6]:  # Attorney email
-                answer += f"**📧 Email:** {data[6]}  \n"
+                answer += f"**� Email:** {data[6]}  \n"
             if data[7]:  # Attorney phone
                 formatted_attorney_phone = self._format_phone_number(data[7])
                 answer += f"**📱 Phone:** {formatted_attorney_phone}  \n"
@@ -1670,14 +1677,13 @@ Be encouraging and specific."""
 
    **DATES (2 cols):** posted_date (DATE), days_since_posted
 
-3. **PROCESSED.EMPLOYER_INTELLIGENCE** - Company H-1B profiles:
-   - employer_original, employer_clean, sponsorship_score, approval_rate, total_filings, total_certified, total_denied, filings_6mo, avg_wage_offered, is_violator, risk_level
-
 **CRITICAL NOTES:**
-- All state columns use 2-letter postal codes (CA not California, NY not New York)
+- Query ONLY from: RAW.H1B_RAW or PROCESSED.JOBS_PROCESSED (these are the main tables)
+- ALL state columns use 2-letter postal codes (CA not California, NY not New York)
 - Use EXACT column names as listed above
-- Join H1B_RAW with JOBS_PROCESSED on: h1b_employer_name = employer_name (use ILIKE)
-- Join EMPLOYER_INTELLIGENCE with others on: employer_clean (use ILIKE)
+- If asking about H-1B sponsorship: Query RAW.H1B_RAW, calculate approval rate = SUM(CASE WHEN case_status = 'Certified' THEN 1 ELSE 0 END) / COUNT(*)
+- If asking about jobs: Query PROCESSED.JOBS_PROCESSED
+- Can join on: employer_name ILIKE comparison (both tables have this column)
 
 **YOUR TASK:**
 1. Write a SQL query to answer the question (use Snowflake SQL syntax)
@@ -1686,11 +1692,12 @@ Be encouraging and specific."""
 
 **RULES:**
 - Use ILIKE for case-insensitive string matching
-- Join tables when needed (e.g., JOBS_PROCESSED with H1B_RAW on employer name)
-- Calculate approval rate as: total_certified / total_filings * 100
+- Join tables when needed using ON h.employer_name ILIKE j.company pattern
+- For H-1B approval rate: ROUND(100.0 * SUM(CASE WHEN case_status = 'Certified' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) as approval_rate
 - Format phone numbers if present
 - Limit results to 10-20 rows max
 - Use proper aggregations (AVG, COUNT, SUM) for statistics
+- ALWAYS specify schema.table (e.g., RAW.H1B_RAW, PROCESSED.JOBS_PROCESSED)
 
 **OUTPUT FORMAT:**
 Return a JSON object with:
@@ -1702,9 +1709,10 @@ Return a JSON object with:
 
 **CRITICAL SQL FORMATTING RULES:**
 - Write SQL as a SINGLE LINE with spaces (no line breaks, no backslash continuations)
-- Example: "sql": "SELECT col1, col2 FROM table WHERE condition LIMIT 10"
+- Example: "sql": "SELECT col1, col2 FROM RAW.H1B_RAW WHERE EMPLOYER_NAME ILIKE 'Amazon' LIMIT 10"
 - DO NOT use backslash (\) for line continuation - it breaks JSON parsing
 - Keep SQL readable but on one line
+- MUST use full schema.table paths (RAW.H1B_RAW not just H1B_RAW)
 
 If the question is outside the scope of available data, set can_answer=false and explain what data is missing.
 

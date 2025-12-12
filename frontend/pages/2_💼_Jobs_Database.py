@@ -115,15 +115,27 @@ def get_filter_options():
     try:
         companies_resp = st.session_state.api_client.get('/api/jobs/companies')
         locations_resp = st.session_state.api_client.get('/api/jobs/locations')
-        return companies_resp['companies'], locations_resp['locations']
+        
+        companies = companies_resp.get('companies', [])
+        locations = locations_resp.get('locations', [])
+        
+        return companies, locations
     except Exception as e:
-        st.warning(f"Using cached filter options: {e}")
+        st.error(f"⚠️ Failed to load filter options: {e}")
         return [], []
 
 # Load filter options
 companies_data, locations_data = get_filter_options()
 all_companies = [c['name'] for c in companies_data] if companies_data else []
 all_locations = [l['name'] for l in locations_data] if locations_data else []
+
+# Debug info (remove after fixing)
+if len(all_companies) == 0 or len(all_locations) == 0:
+    with st.expander("🔍 Debug: Filter Options Status"):
+        st.write(f"Companies loaded: {len(all_companies)}")
+        st.write(f"Locations loaded: {len(all_locations)}")
+        st.write(f"Companies data: {companies_data[:3] if companies_data else 'None'}")
+        st.write(f"Locations data: {locations_data[:3] if locations_data else 'None'}")
 
 # Get stats
 stats = get_job_stats()
@@ -237,25 +249,25 @@ with col6:
         key="date_filter"
     )
 
-# Filter action buttons
-col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 4])
+# Load initial jobs if not loaded yet
+if not st.session_state.jobs_loaded:
+    with st.spinner("⏳ Loading latest jobs..."):
+        try:
+            response = st.session_state.api_client.post('/api/jobs/search', json={
+                "search": None,
+                "companies": None,
+                "locations": None,
+                "limit": 50,
+                "offset": 0
+            })
+            st.session_state.all_jobs = response.get('jobs', [])
+            st.session_state.jobs_loaded = True
+        except Exception as e:
+            st.error(f"Failed to load initial jobs: {e}")
+            st.session_state.jobs_loaded = False
 
-with col_btn1:
-    apply_filters = st.button("🎯 Apply Filters", type="primary", use_container_width=True)
-
-with col_btn2:
-    clear_filters = st.button("🔄 Clear All", use_container_width=True)
-
-# Handle clear filters
-if clear_filters:
-    # Clear all filter session state keys
-    st.session_state.category_filter = []
-    st.session_state.company_filter = []
-    st.session_state.location_filter = []
-    st.session_state.work_filter = []
-    st.session_state.visa_filter = 'All'
-    st.session_state.date_filter = 'Any time'
-    st.rerun()
+# Info message about filters
+st.info("💡 Filters auto-apply. Just select options and results update automatically.")
 
 # Sort and Pagination options
 st.markdown("---")
@@ -268,11 +280,21 @@ with col_sort:
     )
 
 with col_limit:
-    results_limit = st.selectbox(
-        "📄 Results per page",
-        options=[50, 100, 200, 500],
-        index=0
+    results_per_page = st.selectbox(
+        "📄 Per page",
+        options=[25, 50, 100],
+        index=1
     )
+
+# Initialize pagination state
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = 1
+if 'all_jobs' not in st.session_state:
+    st.session_state.all_jobs = []
+if 'last_filters' not in st.session_state:
+    st.session_state.last_filters = None
+if 'jobs_loaded' not in st.session_state:
+    st.session_state.jobs_loaded = False
 
 # Map sort options to API values
 sort_map = {
@@ -290,12 +312,11 @@ posted_days_map = {
     'Last 30 days': 30
 }
 
-# Build filter request - only include non-default values
-# Use category as search term if selected
+# Build filter request
 category_search = " OR ".join(job_categories) if job_categories else None
 
-filter_request = {
-    "search": category_search,  # Use categories as search terms
+current_filters = {
+    "search": category_search,
     "companies": selected_companies if selected_companies else None,
     "locations": selected_locations if selected_locations else None,
     "work_models": selected_work_models if selected_work_models else None,
@@ -305,19 +326,57 @@ filter_request = {
     "salary_max": None,
     "posted_within_days": posted_days_map[posted_within],
     "sort_by": sort_map[sort_by],
-    "limit": results_limit
+    "limit": results_per_page
 }
 
-# Search jobs with filters
-with st.spinner("🔍 Searching jobs..."):
-    jobs_data, total_jobs = search_jobs(filter_request)
-    filtered_df = pd.DataFrame(jobs_data) if jobs_data else pd.DataFrame()
+# Reset page if filters changed (but not on first load)
+initial_filters = all([
+    not job_categories,
+    not selected_companies,
+    not selected_locations,
+    not selected_work_models,
+    visa_filter == 'All',
+    posted_within == 'Any time'
+])
 
-# Display results count
+if st.session_state.last_filters is not None and st.session_state.last_filters != current_filters:
+    st.session_state.current_page = 1
+
+st.session_state.last_filters = current_filters.copy()
+
+# Calculate offset for current page
+offset = (st.session_state.current_page - 1) * results_per_page
+current_filters['offset'] = offset
+
+# Search jobs with pagination
+with st.spinner(f"🔍 Loading page {st.session_state.current_page}..."):
+    try:
+        response = st.session_state.api_client.post('/api/jobs/search', json=current_filters)
+        jobs_data = response.get('jobs', [])
+        pagination = response.get('pagination', {})
+        
+        # Append new jobs to session state
+        if st.session_state.current_page == 1:
+            st.session_state.all_jobs = jobs_data
+        else:
+            st.session_state.all_jobs.extend(jobs_data)
+            
+        filtered_df = pd.DataFrame(st.session_state.all_jobs) if st.session_state.all_jobs else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Search failed: {e}")
+        filtered_df = pd.DataFrame()
+        pagination = {}
+
+# Display results count with pagination info
+total_matches = pagination.get('total', len(filtered_df))
+has_more = pagination.get('has_more', False)
+current_page_num = pagination.get('current_page', 1)
+total_pages = pagination.get('total_pages', 1)
+
 st.markdown(f"""
 <div style='background: #f0f9ff; padding: 15px; border-radius: 8px; border-left: 4px solid #3b82f6;'>
-    <strong>📊 Showing {len(filtered_df):,} jobs</strong> 
-    {f'(filtered from {stats["total_jobs"]:,} total)' if len(filtered_df) < stats["total_jobs"] else ''}
+    <strong>📊 Showing {len(filtered_df):,} of {total_matches:,} jobs</strong> 
+    (Page {current_page_num} of {total_pages})
 </div>
 """, unsafe_allow_html=True)
 
@@ -398,6 +457,24 @@ else:
                 )
             }
         )
+        
+        # Pagination controls
+        st.markdown("---")
+        if has_more:
+            col_left, col_center, col_right = st.columns([2, 2, 2])
+            with col_center:
+                if st.button("📄 Load More Jobs", use_container_width=True, type="primary"):
+                    st.session_state.current_page += 1
+                    st.rerun()
+            
+            st.markdown(f"""
+            <div style='text-align: center; color: #6b7280; margin: 10px 0;'>
+                Showing {len(filtered_df):,} of {total_matches:,} jobs • 
+                Page {current_page_num} of {total_pages}
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.success(f"✅ All {total_matches:,} matching jobs loaded!")
         
         # Add apply buttons for selected rows
         st.markdown("---")
