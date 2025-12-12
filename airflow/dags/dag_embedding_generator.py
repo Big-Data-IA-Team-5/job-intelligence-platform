@@ -9,6 +9,11 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import pendulum
+import sys
+import os
+
+# Add dags folder to path for module imports
+sys.path.insert(0, os.path.join(os.environ.get('AIRFLOW_HOME', '/home/airflow'), 'gcs/dags'))
 
 # Load code dependencies from GCS (Composer-compatible)
 from gcs_loader import setup_code_dependencies, get_composer_bucket

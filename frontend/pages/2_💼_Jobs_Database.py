@@ -377,9 +377,8 @@ else:
             hide_index=True,
             column_config={
                 "🎯 Apply": st.column_config.LinkColumn(
-                    "🎯 Apply",
-                    help="Click to open job application page",
-                    width="medium"
+                    "🔗 Apply",
+                    display_text="Apply"
                 )
             }
         )

@@ -94,7 +94,15 @@ def get_composer_bucket():
         print(f"✅ Extracted bucket from DAGS_FOLDER: {bucket}")
         return bucket
     
-    # Fallback: hardcoded bucket for known Composer environment
-    fallback_bucket = 'gs://us-central1-job-intel-airfl-d2b0ae78-bucket'
-    print(f"⚠️  Using fallback bucket: {fallback_bucket}")
-    return fallback_bucket
+    # Fallback: Auto-detect from environment
+    try:
+        from airflow.models import Variable
+        bucket = Variable.get("GCS_BUCKET", default_var=None)
+        if bucket:
+            print(f"✅ Using bucket from Airflow Variable: {bucket}")
+            return bucket
+    except:
+        pass
+    
+    # Final fallback: raise error instead of hardcoding
+    raise ValueError("❌ Cannot auto-detect GCS bucket. Set AIRFLOW__CORE__DAGS_FOLDER env var or create Airflow Variable 'GCS_BUCKET'")

@@ -13,6 +13,10 @@ from datetime import datetime, timedelta
 import pendulum
 import os
 import json
+import sys
+
+# Add dags folder to path for module imports
+sys.path.insert(0, os.path.join(os.environ.get('AIRFLOW_HOME', '/home/airflow'), 'gcs/dags'))
 
 # Load code dependencies from GCS (Composer-compatible)
 from gcs_loader import setup_code_dependencies, get_composer_bucket
@@ -127,7 +131,7 @@ def download_dbt_project(**context):
     
     # Download root files
     for file in dbt_files:
-        blob = gcs_bucket.blob(f'dbt/{file}')
+        blob = gcs_bucket.blob(f'data/dbt/{file}')
         if blob.exists():
             local_file = os.path.join(local_dbt_path, file)
             blob.download_to_filename(local_file)
@@ -138,12 +142,12 @@ def download_dbt_project(**context):
     # Download directories (models, macros, etc.)
     directories = ['models', 'macros', 'dbt_packages']
     for directory in directories:
-        blobs = list(gcs_bucket.list_blobs(prefix=f'dbt/{directory}/'))
+        blobs = list(gcs_bucket.list_blobs(prefix=f'data/dbt/{directory}/'))
         if blobs:
             for blob in blobs:
                 if not blob.name.endswith('/'):  # Skip directory markers
                     # Create local path
-                    relative_path = blob.name.replace('dbt/', '', 1)
+                    relative_path = blob.name.replace('data/dbt/', '', 1)
                     local_file = os.path.join(local_dbt_path, relative_path)
                     os.makedirs(os.path.dirname(local_file), exist_ok=True)
                     
