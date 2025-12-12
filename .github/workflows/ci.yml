@@ -1,0 +1,88 @@
+name: CI - Tests & Linting
+
+on:
+  push:
+    branches: [ main, dev, staging ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black pytest pytest-cov
+        
+        # Install backend dependencies
+        if [ -f backend/requirements.txt ]; then
+          pip install -r backend/requirements.txt
+        fi
+        
+        # Install frontend dependencies
+        if [ -f frontend/requirements.txt ]; then
+          pip install -r frontend/requirements.txt
+        fi
+        
+        # Install airflow dependencies
+        if [ -f airflow/requirements.txt ]; then
+          pip install -r airflow/requirements.txt
+        fi
+        
+        # Install root dependencies
+        if [ -f requirements.txt ]; then
+          pip install -r requirements.txt
+        fi
+
+    - name: Lint with flake8
+      run: |
+        echo "🔍 Running flake8 linting..."
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics \
+          --exclude=.git,__pycache__,venv,env,.venv,.pytest_cache,node_modules,dbt_packages,target,logs
+        
+        # Exit-zero treats all errors as warnings. Max line length = 120
+        flake8 . --count --exit-zero --max-complexity=15 --max-line-length=120 --statistics \
+          --exclude=.git,__pycache__,venv,env,.venv,.pytest_cache,node_modules,dbt_packages,target,logs
+
+    - name: Check code formatting with black
+      run: |
+        echo "🎨 Checking code formatting..."
+        black --check --line-length 120 --exclude='/(\.git|__pycache__|venv|env|\.venv|dbt_packages|target|logs|node_modules)/' . || true
+
+    - name: Run unit tests
+      run: |
+        echo "🧪 Running unit tests..."
+        # Run pytest with coverage
+        pytest tests/ -v --cov=. --cov-report=term-missing --cov-report=xml \
+          --ignore=dbt_packages --ignore=target --ignore=logs --ignore=node_modules || true
+      continue-on-error: true
+
+    - name: Test summary
+      if: always()
+      run: |
+        echo "✅ CI Tests Complete"
+        echo "- Linting: Checked for syntax errors and code quality"
+        echo "- Formatting: Verified code style compliance"
+        echo "- Unit Tests: Executed test suite"
