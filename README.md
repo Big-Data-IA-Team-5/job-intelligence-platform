@@ -1,3 +1,4 @@
+# 🚀 Job Intelligence Platform
 
 ## 🎥 Demo Video
 
@@ -43,7 +44,7 @@ gcloud run deploy job-intelligence-frontend \
   --set-env-vars BACKEND_URL=https://job-intelligence-backend-97083220044.us-central1.run.app,APP_TIMEZONE=America/New_York \
   --project job-intelligence-platform
 ```
-# 🚀 Job Intelligence Platform
+
 
 > A comprehensive end-to-end AI-powered job search platform that scrapes 50K+ jobs, enriches them with H-1B visa data, and provides intelligent matching with natural language understanding.
 
