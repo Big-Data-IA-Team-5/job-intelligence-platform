@@ -1,12 +1,37 @@
-\n## Recent Updates (2025-12-12)
-\n- Frontend: Timezone-aware greeting via `APP_TIMEZONE` (defaults to America/New_York).
+
+## 🎥 Demo Video
+
+Watch a quick walkthrough of the platform:
+
+- YouTube: https://youtu.be/placeholder-demo-link
+
+### 📘 Code Lab
+
+Follow the step-by-step guided codelab to explore and deploy the platform:
+
+- Code Lab: https://codelabs-preview.appspot.com/?file_id=1IdCTMyAI9XGI3dAA2c7xzAaLcEPnVPqmRHvpz3LJE48#6
+
+## 🌐 Live Application URLs
+
+**Frontend:** https://job-intelligence-frontend-97083220044.us-central1.run.app  
+**Backend API:** https://job-intelligence-backend-97083220044.us-central1.run.app  
+**Project:** job-intelligence-platform (97083220044) | **Region:** us-central1
+
+## Recent Updates (2025-12-12)
+
+- Frontend: Removed career advice example button
+- Frontend: Preloaded jobs on page load
+- Frontend: Timezone-aware greeting via `APP_TIMEZONE` (defaults to America/New_York).
 - Frontend: Removed job card rendering from Home to avoid duplicate listings.
 - Frontend: Advanced Analytics shows H-1B breakdown in table and tooltips:
   - ✅ Approved (`h1b_certified`), 📋 Total Filed (`h1b_applications`), 📊 Rate = (Approved / Filed) × 100.
+- Backend: Company filter uses ILIKE for fuzzy matching
 - Backend: Analytics filters exclude placeholder company names (Unknown/Confidential/N/A/etc.).
 - Backend: `/analytics/visa-sponsors` now returns `h1b_applications` and `h1b_certified`.
-\n### Updated Deploy Command (Frontend)
-\n```bash
+
+### Updated Deploy Command (Frontend)
+
+```bash
 gcloud run deploy job-intelligence-frontend \
   --source . \
   --region us-central1 \
@@ -40,6 +65,10 @@ gcloud run deploy job-intelligence-frontend \
 - [Cost Optimization](#-cost-optimization)
 - [Troubleshooting](#-troubleshooting)
 
+
+
+
+
 ## 🎯 Overview
 
 The Job Intelligence Platform is a production-ready system that automates the entire job discovery lifecycle:
@@ -51,7 +80,6 @@ The Job Intelligence Platform is a production-ready system that automates the en
 5. **📊 Visualizes** trends, salaries, and company insights
 
 **Live Demo**: [Frontend](https://job-intelligence-frontend-97083220044.us-central1.run.app) • [API Docs](https://job-intelligence-backend-97083220044.us-central1.run.app/docs)
-**Code Lab**: https://codelabs-preview.appspot.com/?file_id=1IdCTMyAI9XGI3dAA2c7xzAaLcEPnVPqmRHvpz3LJE48#6
 
 ## ✨ Features
 
@@ -718,8 +746,6 @@ MIT License - See [LICENSE](LICENSE) file
 
 ---
 
-**📧 Contact**: your-email@example.com  
-**🔗 Website**: [your-website.com](https://your-website.com)  
 **📅 Last Updated**: December 2025  
 **📦 Version**: 2.0.0  
 **🚀 Status**: Production (LARGE Environment)
@@ -729,3 +755,4 @@ MIT License - See [LICENSE](LICENSE) file
 <div align="center">
 Made with ❤️ by Your Team
 </div>
+
