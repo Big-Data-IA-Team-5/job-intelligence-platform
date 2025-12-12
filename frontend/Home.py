@@ -6,6 +6,11 @@ from utils.api_client import APIClient
 from utils.context_manager import ConversationContext
 import io
 from datetime import datetime
+import os
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None
 
 st.set_page_config(
     page_title="Job Intelligence AI",
@@ -114,7 +119,14 @@ with st.sidebar:
 
 if not st.session_state.messages:
     # Creative time-based greetings
-    hour = datetime.now().hour
+    tz_name = os.getenv('APP_TIMEZONE') or os.getenv('USER_TIMEZONE') or os.getenv('TZ') or 'America/New_York'
+    if ZoneInfo is not None:
+        try:
+            hour = datetime.now(ZoneInfo(tz_name)).hour
+        except Exception:
+            hour = datetime.now().hour
+    else:
+        hour = datetime.now().hour
     
     if 2 <= hour < 5:
         greeting = "Couldn't sleep? 🌃"
@@ -243,66 +255,9 @@ else:
     # Display chat messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            
-            # Display job cards if jobs are present in the message
-            if message["role"] == "assistant" and "jobs" in message:
-                jobs = message["jobs"]
-                if jobs and len(jobs) > 0:
-                    # Deduplicate jobs by TITLE + COMPANY + LOCATION
-                    seen_jobs = set()
-                    unique_jobs = []
-                    for job in jobs:
-                        job_key = (
-                            str(job.get('TITLE', '')).lower().strip(),
-                            str(job.get('COMPANY', '')).lower().strip(),
-                            str(job.get('LOCATION', '')).lower().strip()
-                        )
-                        if job_key not in seen_jobs:
-                            seen_jobs.add(job_key)
-                            unique_jobs.append(job)
-                    
-                    st.markdown(f"---")
-                    st.markdown(f"### 🎯 Found {len(unique_jobs)} jobs (showing {min(len(unique_jobs), 10)})")
-                    
-                    for i, job in enumerate(unique_jobs[:10]):  # Show first 10 unique jobs
-                        with st.expander(f"**{i+1}. {job.get('TITLE', 'Unknown Title')}** at {job.get('COMPANY', 'Unknown')}"):
-                            col1, col2 = st.columns([3, 1])
-                            
-                            with col1:
-                                st.markdown(f"**🏢 Company:** {job.get('COMPANY', 'N/A')}")
-                                st.markdown(f"**📍 Location:** {job.get('LOCATION', 'N/A')}")
-                                
-                                if job.get('WORK_MODEL'):
-                                    st.markdown(f"**💼 Work Model:** {job['WORK_MODEL']}")
-                                
-                                if job.get('VISA_CATEGORY'):
-                                    st.markdown(f"**🎫 Visa:** {job['VISA_CATEGORY']}")
-                                
-                                if job.get('H1B_SPONSOR'):
-                                    approval_rate = job.get('H1B_APPROVAL_RATE', 100)
-                                    st.markdown(f"**✅ H-1B Sponsor:** Yes ({approval_rate}% approval rate)")
-                                
-                                if job.get('SALARY_MIN') and job.get('SALARY_MAX'):
-                                    st.markdown(f"**💰 Salary:** ${job['SALARY_MIN']:,.0f} - ${job['SALARY_MAX']:,.0f}")
-                                
-                                if job.get('DAYS_SINCE_POSTED') is not None:
-                                    days = job['DAYS_SINCE_POSTED']
-                                    if days == 0:
-                                        st.markdown(f"**📅 Posted:** Today")
-                                    elif days == 1:
-                                        st.markdown(f"**📅 Posted:** Yesterday")
-                                    else:
-                                        st.markdown(f"**📅 Posted:** {days} days ago")
-                            
-                            with col2:
-                                if job.get('MATCH_SCORE'):
-                                    score = int(job['MATCH_SCORE'])
-                                    color = "🟢" if score >= 70 else "🟡" if score >= 50 else "🔴"
-                                    st.markdown(f"{color} **{score}%** Match")
-                                
-                                if job.get('URL'):
-                                    st.link_button("🔗 Apply Now", job['URL'], use_container_width=True)
+            # Always show the assistant's message content
+            if message.get("content"):
+                st.markdown(message["content"])            
             
             # Display AI Intelligence Debug Info (if available)
             if message["role"] == "assistant" and "debug_info" in message:

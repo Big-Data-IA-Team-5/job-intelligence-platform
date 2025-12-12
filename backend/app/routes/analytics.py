@@ -33,6 +33,8 @@ class CompanyStat(BaseModel):
     job_count: int
     h1b_sponsor: bool
     avg_approval_rate: Optional[float] = None
+    h1b_applications: Optional[int] = None  # Total H-1B applications filed
+    h1b_certified: Optional[int] = None  # Total H-1B applications approved/certified
 
 
 class LocationStat(BaseModel):
@@ -228,8 +230,10 @@ async def get_top_companies(
             LEFT JOIN employer_intelligence e
                 ON UPPER(j.company_clean) = e.employer_clean
             WHERE j.company IS NOT NULL
-                AND j.company NOT IN ('United States', 'USA', 'US', 'International', 'INTERNATIONAL')
+                AND j.company NOT IN ('United States', 'USA', 'US', 'International', 'INTERNATIONAL', 'Unknown', 'Confidential', 'N/A', 'Not Specified', 'Private')
                 AND j.company NOT ILIKE 'international%'
+                AND j.company NOT ILIKE 'unknown%'
+                AND j.company NOT ILIKE 'confidential%'
                 AND j.company NOT IN ('AR', 'BR', 'HI', 'CA', 'NY', 'TX', 'FL', 'IL', 'PA', 'OH', 'GA', 'NC', 'MI', 'NJ', 'VA', 'WA', 'AZ', 'MA', 'TN', 'IN', 'MO', 'MD', 'WI', 'CO', 'MN', 'SC', 'AL', 'LA', 'KY', 'OR', 'OK', 'CT', 'UT', 'IA', 'NV', 'AR', 'MS', 'KS', 'NM', 'NE', 'WV', 'ID', 'HI', 'NH', 'ME', 'MT', 'RI', 'DE', 'SD', 'ND', 'AK', 'VT', 'WY')
                 AND LENGTH(j.company) > 2
             GROUP BY j.company
@@ -340,14 +344,18 @@ async def get_h1b_sponsors(
                 COUNT(*) as job_count,
                 TRUE as h1b_sponsor,
                 -- Calculate REAL approval rate: total_certified / total_filings
-                MAX(e.total_certified * 100.0 / NULLIF(e.total_filings, 0)) as avg_approval_rate
+                MAX(e.total_certified * 100.0 / NULLIF(e.total_filings, 0)) as avg_approval_rate,
+                MAX(e.total_filings) as h1b_applications,
+                MAX(e.total_certified) as h1b_certified
             FROM jobs_processed j
             LEFT JOIN employer_intelligence e
                 ON UPPER(j.company_clean) = e.employer_clean
             WHERE j.h1b_sponsor = TRUE
                 AND j.company IS NOT NULL
-                AND j.company NOT IN ('United States', 'USA', 'US', 'International', 'INTERNATIONAL', 'ICE')
+                AND j.company NOT IN ('United States', 'USA', 'US', 'International', 'INTERNATIONAL', 'ICE', 'Unknown', 'Confidential', 'N/A', 'Not Specified', 'Private')
                 AND j.company NOT ILIKE 'international%'
+                AND j.company NOT ILIKE 'unknown%'
+                AND j.company NOT ILIKE 'confidential%'
                 AND j.company NOT IN ('AR', 'BR', 'HI', 'CA', 'NY', 'TX', 'FL', 'IL', 'PA', 'OH', 'GA', 'NC', 'MI', 'NJ', 'VA', 'WA', 'AZ', 'MA', 'TN', 'IN', 'MO', 'MD', 'WI', 'CO', 'MN', 'SC', 'AL', 'LA', 'KY', 'OR', 'OK', 'CT', 'UT', 'IA', 'NV', 'AR', 'MS', 'KS', 'NM', 'NE', 'WV', 'ID', 'HI', 'NH', 'ME', 'MT', 'RI', 'DE', 'SD', 'ND', 'AK', 'VT', 'WY')
                 AND LENGTH(j.company) > 2
             GROUP BY j.company
@@ -362,7 +370,9 @@ async def get_h1b_sponsors(
                 company=row[0],
                 job_count=row[1],
                 h1b_sponsor=True,
-                avg_approval_rate=float(row[3]) if row[3] else None
+                avg_approval_rate=float(row[3]) if row[3] else None,
+                h1b_applications=int(row[4]) if row[4] else None,
+                h1b_certified=int(row[5]) if row[5] else None
             ))
         
         return sponsors

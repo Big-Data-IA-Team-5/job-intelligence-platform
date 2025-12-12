@@ -1,3 +1,23 @@
+\n## Recent Updates (2025-12-12)
+\n- Frontend: Timezone-aware greeting via `APP_TIMEZONE` (defaults to America/New_York).
+- Frontend: Removed job card rendering from Home to avoid duplicate listings.
+- Frontend: Advanced Analytics shows H-1B breakdown in table and tooltips:
+  - ✅ Approved (`h1b_certified`), 📋 Total Filed (`h1b_applications`), 📊 Rate = (Approved / Filed) × 100.
+- Backend: Analytics filters exclude placeholder company names (Unknown/Confidential/N/A/etc.).
+- Backend: `/analytics/visa-sponsors` now returns `h1b_applications` and `h1b_certified`.
+\n### Updated Deploy Command (Frontend)
+\n```bash
+gcloud run deploy job-intelligence-frontend \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --timeout 300 \
+  --memory 2Gi \
+  --cpu 2 \
+  --max-instances 10 \
+  --set-env-vars BACKEND_URL=https://job-intelligence-backend-97083220044.us-central1.run.app,APP_TIMEZONE=America/New_York \
+  --project job-intelligence-platform
+```
 # 🚀 Job Intelligence Platform
 
 > A comprehensive end-to-end AI-powered job search platform that scrapes 50K+ jobs, enriches them with H-1B visa data, and provides intelligent matching with natural language understanding.

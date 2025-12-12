@@ -1,6 +1,6 @@
 """
-Advanced Analytics Dashboard - Meaningful Insights for International Students
-Powered by 47K+ jobs and real H-1B data from Snowflake
+Advanced Analytics Dashboard - Real-time Data Visualizations
+Powered by 37K+ jobs and real H-1B data from Snowflake
 """
 import streamlit as st
 import pandas as pd
@@ -9,42 +9,32 @@ import plotly.express as px
 from utils.api_client import APIClient
 
 st.set_page_config(
-    page_title="Job Market Intelligence",
+    page_title="Advanced Analytics",
     page_icon="📊",
     layout="wide"
 )
 
-# Custom CSS for better styling
+# Custom CSS (cleaner, lighter look)
 st.markdown("""
 <style>
-    .insight-box {
-        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-        border-left: 4px solid #0ea5e9;
-        padding: 15px 20px;
-        border-radius: 8px;
-        margin: 15px 0;
+    .metric-card { 
+        background: #ffffff; 
+        border: 1px solid #e5e7eb; 
+        padding: 14px; 
+        border-radius: 10px; 
+        color: #111827; 
+        text-align: center; 
+        box-shadow: 0 1px 2px rgba(0,0,0,0.03);
     }
-    .metric-highlight {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 20px;
-        border-radius: 12px;
-        color: white;
-        text-align: center;
+    .insight-box { 
+        background-color: #f9fafb; 
+        border-left: 4px solid #6366f1; 
+        padding: 12px; 
+        border-radius: 6px; 
+        margin: 8px 0; 
+        color: #1f2937; 
     }
-    .warning-box {
-        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-        border-left: 4px solid #f59e0b;
-        padding: 15px 20px;
-        border-radius: 8px;
-        margin: 15px 0;
-    }
-    .success-box {
-        background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
-        border-left: 4px solid #10b981;
-        padding: 15px 20px;
-        border-radius: 8px;
-        margin: 15px 0;
-    }
+    .subtle { color: #6b7280; font-size: 12px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -52,404 +42,437 @@ st.markdown("""
 if 'api_client' not in st.session_state:
     st.session_state.api_client = APIClient()
 
-# ============ DATA LOADING FUNCTIONS ============
+# Load data functions
 @st.cache_data(ttl=600)
 def load_summary():
+    """Get overall analytics summary"""
     try:
-        return st.session_state.api_client.get('/analytics/summary')
+        response = st.session_state.api_client.get('/api/v1/analytics/summary')
+        return response
     except Exception as e:
         st.error(f"Failed to load summary: {e}")
         return None
 
 @st.cache_data(ttl=600)
-def load_salary_by_role():
+def load_top_companies(limit=20):
+    """Get top companies by job count"""
     try:
-        return st.session_state.api_client.get('/analytics/salary-by-role')
-    except:
+        response = st.session_state.api_client.get('/api/v1/analytics/companies', params={'limit': limit})
+        return response
+    except Exception as e:
+        st.error(f"Failed to load companies: {e}")
         return []
 
 @st.cache_data(ttl=600)
-def load_work_models():
+def load_h1b_sponsors(limit=30):
+    """Get top H-1B sponsoring companies"""
     try:
-        return st.session_state.api_client.get('/analytics/work-models')
-    except:
+        response = st.session_state.api_client.get('/api/v1/analytics/visa-sponsors', params={'limit': limit})
+        return response
+    except Exception as e:
+        st.error(f"Failed to load H-1B sponsors: {e}")
         return []
 
 @st.cache_data(ttl=600)
-def load_h1b_comparison():
+def load_locations(limit=15):
+    """Get top locations by job count"""
     try:
-        return st.session_state.api_client.get('/analytics/h1b-vs-non-sponsor')
-    except:
-        return {}
-
-@st.cache_data(ttl=600)
-def load_location_salary():
-    try:
-        return st.session_state.api_client.get('/analytics/location-salary')
-    except:
+        response = st.session_state.api_client.get('/api/v1/analytics/locations', params={'limit': limit})
+        return response
+    except Exception as e:
+        st.error(f"Failed to load locations: {e}")
         return []
 
 @st.cache_data(ttl=600)
-def load_experience_levels():
+def load_categories():
+    """Get job distribution by visa category"""
     try:
-        return st.session_state.api_client.get('/analytics/experience-level')
-    except:
-        return []
-
-@st.cache_data(ttl=600)
-def load_job_types():
-    try:
-        return st.session_state.api_client.get('/analytics/job-type-breakdown')
-    except:
-        return []
-
-@st.cache_data(ttl=600)
-def load_top_skills():
-    try:
-        return st.session_state.api_client.get('/analytics/top-skills')
-    except:
-        return []
-
-@st.cache_data(ttl=600)
-def load_h1b_risk():
-    try:
-        return st.session_state.api_client.get('/analytics/h1b-risk-analysis')
-    except:
-        return {}
-
-@st.cache_data(ttl=600)
-def load_h1b_sponsors(limit=25):
-    try:
-        return st.session_state.api_client.get('/analytics/visa-sponsors', params={'limit': limit})
-    except:
+        response = st.session_state.api_client.get('/api/v1/analytics/categories')
+        return response
+    except Exception as e:
+        st.error(f"Failed to load categories: {e}")
         return []
 
 @st.cache_data(ttl=600)
 def load_trends(days=30):
+    """Get job posting trends"""
     try:
-        return st.session_state.api_client.get('/analytics/trends', params={'days': days})
-    except:
+        response = st.session_state.api_client.get('/api/v1/analytics/trends', params={'days': days})
+        return response
+    except Exception as e:
+        st.error(f"Failed to load trends: {e}")
         return []
 
 # Load all data
 summary = load_summary()
 if not summary:
-    st.error("⚠️ Unable to connect to backend. Please ensure the backend service is running.")
+    st.error("Unable to connect to backend. Please ensure backend service is running.")
     st.stop()
 
-# Ensure summary has required keys with defaults
-summary = {
-    'total_jobs': summary.get('total_jobs', 0),
-    'total_companies': summary.get('total_companies', 0),
-    'h1b_sponsors': summary.get('h1b_sponsors', 0),
-    'recent_postings_7d': summary.get('recent_postings_7d', 0),
-    'avg_salary': summary.get('avg_salary', None)
-}
+companies_data = load_top_companies(20)
+h1b_sponsors_data = load_h1b_sponsors(30)
+locations_data = load_locations(15)
+categories_data = load_categories()
+trends_data = load_trends(30)
 
-# ============ HEADER ============
+# Helper: normalize ambiguous company labels
+def _normalize_company(name: str) -> str:
+    try:
+        n = (name or '').strip()
+    except Exception:
+        return 'Unspecified Company'
+    if n.lower() in {'unknown','n/a','na','confidential','stealth','not disclosed','unspecified','-','null','none'}:
+        return 'Unspecified Company'
+    return n
+
+# Header
 st.markdown("""
-<div style='background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%); 
-            padding: 30px; border-radius: 15px; margin-bottom: 25px;'>
-    <h1 style='color: white; margin: 0; font-size: 2.2em;'>🎯 Job Market Intelligence for International Students</h1>
-    <p style='color: #93c5fd; margin: 10px 0 0 0; font-size: 1.1em;'>
-        Data-driven insights from {total_jobs:,} jobs • Updated in real-time
-    </p>
+<div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            padding: 30px; border-radius: 10px; margin-bottom: 20px;'>
+    <h1 style='color: white; margin: 0;'>🎯 Advanced Job Intelligence Analytics</h1>
+    <p style='color: #e0e7ff; margin: 10px 0 0 0;'>Interactive visualizations powered by 37K+ jobs and real H-1B data</p>
 </div>
-""".format(total_jobs=summary['total_jobs']), unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# ============ KEY METRICS ROW ============
-col1, col2, col3, col4 = st.columns(4)
+# Summary Cards
+st.markdown("### 📊 Key Metrics")
+col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
-    st.metric("📋 Total Jobs", f"{summary['total_jobs']:,}", 
-              delta=f"+{summary['recent_postings_7d']:,} this week")
+    st.metric("Total Jobs", f"{summary.get('total_jobs', 0):,}")
 with col2:
-    st.metric("🏢 Companies Hiring", f"{summary['total_companies']:,}")
+    st.metric("Companies", f"{summary.get('total_companies', 0):,}")
 with col3:
-    h1b_pct = round(summary['h1b_sponsors'] / summary['total_companies'] * 100, 1) if summary['total_companies'] > 0 else 0
-    st.metric("🎫 H-1B Sponsors", f"{summary['h1b_sponsors']:,}", 
-              delta=f"{h1b_pct}% of companies")
+    st.metric("H-1B Sponsors", f"{summary.get('h1b_sponsors', 0):,}")
 with col4:
-    avg_sal = f"${summary['avg_salary']/1000:.0f}K" if summary.get('avg_salary') else "N/A"
-    st.metric("💰 Avg Salary", avg_sal)
+    st.metric("New (7 days)", f"{summary.get('recent_postings_7d', 0):,}")
+with col5:
+    avg_sal = f"${summary.get('avg_salary', 0)/1000:.0f}K" if summary.get('avg_salary') else "N/A"
+    st.metric("Avg Salary", avg_sal)
 
 st.divider()
 
-
-
-# ============ SECTION 3: REMOTE WORK OPPORTUNITY ============
-st.markdown("## 🏠 Remote Work: Flexibility Trends")
-st.caption("Understanding the new normal in tech jobs")
-
-work_data = load_work_models()
-
-if work_data:
-    col1, col2 = st.columns([1, 1])
+# Chart 1: Job Posting Trends
+if trends_data:
+    st.markdown("### 📈 Job Posting Trends (Last 30 Days)")
+    trends_df = pd.DataFrame(trends_data)
     
-    with col1:
-        # Ensure work_data is a list for DataFrame construction
-        if not isinstance(work_data, list):
-            work_data = [work_data] if work_data else []
+    if not trends_df.empty:
+        fig_trends = go.Figure()
+        fig_trends.add_trace(go.Scatter(
+            x=trends_df.get('date', []),
+            y=trends_df.get('count', []),
+            mode='lines+markers',
+            name='Job Postings',
+            line=dict(color='#667eea', width=3),
+            marker=dict(size=8),
+            fill='tozeroy',
+            fillcolor='rgba(102, 126, 234, 0.1)'
+        ))
         
-        # Only create DataFrame if we have valid data
-        if work_data and len(work_data) > 0:
-            df = pd.DataFrame(work_data)
-        else:
-            st.warning("No work model data available")
-            df = None
+        fig_trends.update_layout(
+            height=350,
+            xaxis_title="Date",
+            yaxis_title="Number of Jobs Posted",
+            hovermode='x unified',
+            showlegend=False
+        )
         
-        if df is not None and 'work_model' in df.columns:
-            colors = {'Remote': '#10b981', 'Hybrid': '#3b82f6', 'On-site': '#94a3b8'}
+        st.plotly_chart(fig_trends, use_container_width=True)
+        
+        # Insight
+        total_last_30 = trends_df['count'].sum() if 'count' in trends_df.columns else 0
+        avg_daily = trends_df['count'].mean() if 'count' in trends_df.columns else 0
+        st.markdown(f"""
+        <div class='insight-box'>
+            <strong>💡 Insight:</strong> {total_last_30:,} jobs posted in last 30 days 
+            (avg: {avg_daily:.0f} jobs/day)
+        </div>
+        """, unsafe_allow_html=True)
+
+st.divider()
+
+# Two column layout
+col_left, col_right = st.columns(2)
+
+with col_left:
+    # Chart 2: Top Companies
+    if companies_data:
+        st.markdown("### 🏢 Top Companies by Job Count")
+        companies_df = pd.DataFrame(companies_data)[:15]
+        if not companies_df.empty and 'company' in companies_df.columns:
+            companies_df['company'] = companies_df['company'].apply(_normalize_company)
+        
+        if not companies_df.empty and 'company' in companies_df.columns and 'job_count' in companies_df.columns:
+            fig_companies = go.Figure()
+            fig_companies.add_trace(go.Bar(
+                y=companies_df['company'],
+                x=companies_df['job_count'],
+                orientation='h',
+                marker=dict(color='#4f46e5'),
+                text=companies_df['job_count'],
+                textposition='outside',
+                hovertemplate='<b>%{y}</b><br>Jobs: %{x}<extra></extra>'
+            ))
             
-            fig = go.Figure(data=[go.Pie(
-                labels=df['work_model'],
-                values=df['count'],
-                hole=0.5,
-                marker=dict(colors=[colors.get(m, '#94a3b8') for m in df['work_model']]),
+            fig_companies.update_layout(
+                height=420,
+                xaxis_title="Number of Jobs",
+                yaxis_title="",
+                showlegend=False,
+                yaxis=dict(autorange="reversed")
+            )
+            
+            st.plotly_chart(fig_companies, use_container_width=True)
+        else:
+            st.info("No company data available")
+    else:
+        st.info("No company data available")
+    st.caption("Note: 'Unspecified Company' means the employer name wasn’t disclosed in the posting.")
+
+with col_right:
+    # Chart 3: Visa Category Distribution
+    if categories_data:
+        st.markdown("### 🎫 Jobs by Visa Category")
+        categories_df = pd.DataFrame(categories_data)[:8]
+        
+        if not categories_df.empty and 'category' in categories_df.columns and 'count' in categories_df.columns:
+            fig_categories = go.Figure(data=[go.Pie(
+                labels=categories_df['category'],
+                values=categories_df['count'],
+                hole=0.4,
+                marker=dict(colors=['#667eea', '#764ba2', '#f093fb', '#4facfe', 
+                                    '#43e97b', '#38f9d7', '#fa709a', '#fee140']),
                 textinfo='label+percent',
                 textposition='outside',
                 hovertemplate='<b>%{label}</b><br>Jobs: %{value:,}<br>%{percent}<extra></extra>'
             )])
             
-            fig.update_layout(
-                title="Work Model Distribution",
-                height=400,
+            fig_categories.update_layout(
+                height=500,
                 showlegend=True,
-                annotations=[dict(text='Work<br>Model', x=0.5, y=0.5, font_size=16, showarrow=False)]
+                legend=dict(orientation="v", yanchor="middle", y=0.5)
             )
             
-            st.plotly_chart(fig, use_container_width=True)
-        
-            with col2:
-                st.markdown("### 📊 Work Model Breakdown")
-                
-                for _, row in df.iterrows():
-                    model = row['work_model']
-                    pct = row['percentage']
-                    count = row['count']
-                    salary = row.get('avg_salary')
-                    
-                    emoji = "🏠" if model == "Remote" else "🔄" if model == "Hybrid" else "🏢"
-                    color = colors.get(model, '#94a3b8')
-                    
-                    salary_str = f"${salary/1000:.0f}K avg" if salary else "Salary varies"
-                    
-                    st.markdown(f"""
-                    <div style='background: white; border: 2px solid {color}; padding: 15px; border-radius: 10px; margin: 10px 0;'>
-                        <div style='display: flex; justify-content: space-between; align-items: center;'>
-                            <div>
-                                <span style='font-size: 1.5em;'>{emoji}</span>
-                                <strong style='font-size: 1.2em; margin-left: 10px;'>{model}</strong>
-                            </div>
-                            <div style='text-align: right;'>
-                                <div style='font-size: 1.5em; font-weight: bold; color: {color};'>{pct:.1f}%</div>
-                                <div style='font-size: 0.9em; color: #6b7280;'>{count:,} jobs</div>
-                            </div>
-                        </div>
-                        <div style='color: #6b7280; margin-top: 5px;'>{salary_str}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+            st.plotly_chart(fig_categories, use_container_width=True)
         else:
-            st.info("📊 Work model data is loading from backend...")
-else:
-    st.warning("⚠️ Work model data temporarily unavailable")
+            st.info("No category data available")
+    else:
+        st.info("No category data available")
 
 st.divider()
 
-# ============ SECTION 5: EXPERIENCE LEVEL OPPORTUNITIES ============
-st.markdown("## 👔 Jobs by Experience Level")
-st.caption("Where do you fit in the job market?")
-
-exp_data = load_experience_levels()
-
-if exp_data:
-    # Ensure exp_data is a list for DataFrame construction
-    if not isinstance(exp_data, list):
-        exp_data = [exp_data] if exp_data else []
+# Chart 4: Top Locations
+if locations_data:
+    st.markdown("### 📍 Top Job Locations")
+    col1, col2 = st.columns([2, 1])
     
-    # Only create DataFrame if we have valid data
-    if exp_data and len(exp_data) > 0:
-        df = pd.DataFrame(exp_data)
-    else:
-        st.warning("No experience level data available")
-        df = None
-    
-    if df is not None and 'level' in df.columns:
-        col1, col2 = st.columns([1, 1])
+    with col1:
+        locations_df = pd.DataFrame(locations_data)[:12]
         
-        with col1:
-            # Funnel chart for experience levels
-            colors = ['#22c55e', '#3b82f6', '#8b5cf6', '#f59e0b']
-            
-            fig = go.Figure(go.Funnel(
-                y=df['level'],
-                x=df['job_count'],
-                textposition="inside",
-                textinfo="value+percent initial",
-                marker=dict(color=colors[:len(df)]),
-                connector=dict(line=dict(color="royalblue", width=1))
+        if not locations_df.empty and 'location' in locations_df.columns and 'job_count' in locations_df.columns:
+            fig_locations = go.Figure()
+            fig_locations.add_trace(go.Bar(
+                x=locations_df['location'],
+                y=locations_df['job_count'],
+                marker=dict(
+                    color='#667eea',
+                    line=dict(color='#764ba2', width=2)
+                ),
+                text=locations_df['job_count'],
+                textposition='outside',
+                hovertemplate='<b>%{x}</b><br>Jobs: %{y:,}<extra></extra>'
             ))
             
-            fig.update_layout(
-                title="Job Availability by Experience Level",
-                height=400
+            fig_locations.update_layout(
+                height=400,
+                xaxis_title="",
+                yaxis_title="Number of Jobs",
+                showlegend=False,
+                xaxis={'tickangle': -45}
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig_locations, use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 🌎 Geographic Insights")
+        locations_df = pd.DataFrame(locations_data)[:12]
         
-        with col2:
-            st.markdown("### 📈 Salary & H-1B by Level")
-            
-            for i, row in df.iterrows():
-                level = row['level']
-                job_count = row['job_count']
-                pct = row['percentage']
-                salary = row.get('avg_salary')
-                h1b_pct = row.get('h1b_friendly_pct', 0)
-                
-                salary_str = f"${salary/1000:.0f}K" if salary else "Varies"
-                
-                st.markdown(f"""
-                <div style='background: #f3f4f6; padding: 15px; border-radius: 10px; margin: 10px 0;'>
-                    <div style='font-weight: bold; font-size: 1.1em; color: #1f2937;'>{level}</div>
-                    <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;'>
-                        <div>
-                            <div style='color: #6b7280; font-size: 0.8em;'>Jobs</div>
-                            <div style='font-weight: bold; color: #3b82f6;'>{job_count:,} ({pct:.0f}%)</div>
-                        </div>
-                        <div>
-                            <div style='color: #6b7280; font-size: 0.8em;'>Avg Salary</div>
-                            <div style='font-weight: bold; color: #10b981;'>{salary_str}</div>
-                        </div>
-                    </div>
-                    <div style='margin-top: 8px;'>
-                        <div style='color: #6b7280; font-size: 0.8em;'>H-1B Friendly</div>
-                        <div style='background: #e5e7eb; border-radius: 4px; height: 8px; margin-top: 4px;'>
-                            <div style='background: #667eea; border-radius: 4px; height: 100%; width: {h1b_pct}%;'></div>
-                        </div>
-                        <div style='font-size: 0.8em; color: #667eea; text-align: right;'>{h1b_pct:.0f}%</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-        
-        # Insight for new grads
-        new_grad_row = df[df['level'].str.contains('Entry|New Grad', case=False, na=False)]
-        if not new_grad_row.empty:
-            ng_count = new_grad_row.iloc[0]['job_count']
-            ng_pct = new_grad_row.iloc[0]['percentage']
+        if not locations_df.empty:
+            top_loc = locations_df.iloc[0]
             st.markdown(f"""
-            <div class='success-box'>
-                <strong>🎓 Good News for New Grads!</strong><br>
-                    There are <strong>{ng_count:,} entry-level positions</strong> ({ng_pct:.0f}% of market) currently available.
-                Focus on building skills and getting internship experience!
+            <div style='background: #f9fafb; padding: 15px; border-radius: 8px;'>
+                <h3 style='margin: 0 0 10px 0; color: #667eea;'>{top_loc.get('location', 'N/A')}</h3>
+                <p style='font-size: 32px; font-weight: bold; margin: 0; color: #1f2937;'>
+                    {top_loc.get('job_count', 0):,}
+                </p>
+                <p style='color: #6b7280; margin: 5px 0 0 0;'>jobs available</p>
             </div>
             """, unsafe_allow_html=True)
-    else:
-        st.info("📊 Experience level data is loading from backend...")
-else:
-    st.warning("⚠️ Experience level data temporarily unavailable")
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            top_5_jobs = locations_df['job_count'].head(5).sum()
+            total_jobs = summary.get('total_jobs', 1)
+            pct = (top_5_jobs / total_jobs * 100) if total_jobs > 0 else 0
+            
+            st.markdown(f"""
+            <div class='insight-box'>
+                <strong>💡 Insight:</strong> Top 5 locations account for 
+                {pct:.1f}% ({top_5_jobs:,}) of all jobs
+            </div>
+            """, unsafe_allow_html=True)
 
 st.divider()
 
-# ============ SECTION 6: TOP H-1B SPONSORS ============
-st.markdown("## 🏆 Top H-1B Sponsoring Companies")
-st.caption("Companies most likely to sponsor your visa")
-
-sponsors_data = load_h1b_sponsors(25)
-
-if sponsors_data:
-    # Ensure sponsors_data is a list for DataFrame construction
-    if not isinstance(sponsors_data, list):
-        sponsors_data = [sponsors_data] if sponsors_data else []
+# Chart 5: H-1B Sponsors Analysis
+if h1b_sponsors_data:
+    st.markdown("### 🏆 Top H-1B Sponsoring Companies")
+    st.caption("Companies actively offering visa sponsorship with approval rate data from actual USCIS filings")
     
-    if sponsors_data and len(sponsors_data) > 0:
-        df = pd.DataFrame(sponsors_data)
-    else:
-        st.warning("No sponsor data available")
-        df = None
+    sponsors_df = pd.DataFrame(h1b_sponsors_data)[:20]
     
-    if df is not None and 'company' in df.columns:
-        # Filter to only show companies with approval rates
-        df = df[df['avg_approval_rate'].notna()][:15]
+    if not sponsors_df.empty and 'company' in sponsors_df.columns:
+        sponsors_df['company'] = sponsors_df['company'].apply(_normalize_company)
+        # Create bubble chart
+        fig_sponsors = go.Figure()
+
+        # Scale bubble sizes (job_count determines size)
+        max_jobs = sponsors_df['job_count'].max() if 'job_count' in sponsors_df.columns else 1
+        sponsors_df['bubble_size'] = (sponsors_df['job_count'] / max_jobs * 50) + 10 if max_jobs > 0 else 20
+
+        # Normalize approval rate to percentage 0-100
+        if 'avg_approval_rate' in sponsors_df.columns:
+            sponsors_df['approval_pct'] = sponsors_df['avg_approval_rate'].apply(lambda v: float(v) if pd.notnull(v) else None)
+            sponsors_df['approval_pct'] = sponsors_df['approval_pct'].apply(lambda v: v * 100.0 if v is not None and v <= 1.0 else v)
+            sponsors_df['approval_pct'] = sponsors_df['approval_pct'].clip(lower=0, upper=100)
+        else:
+            sponsors_df['approval_pct'] = 0.0
+
+        # Sort by job_count and keep top 15 for readability
+        sponsors_df = sponsors_df.sort_values(by='job_count', ascending=False).head(15)
+
+        # Build hover text with breakdown if available
+        hover_texts = []
+        for idx, row in sponsors_df.iterrows():
+            hover = f"<b>{row['company']}</b><br>Jobs: {row['job_count']}"
+            
+            # Show breakdown if available
+            if 'h1b_certified' in row and 'h1b_applications' in row and pd.notnull(row['h1b_certified']) and pd.notnull(row['h1b_applications']):
+                certified = int(row['h1b_certified'])
+                total = int(row['h1b_applications'])
+                hover += f"<br><br>H-1B Breakdown:"
+                hover += f"<br>  ✅ Approved: {certified:,}"
+                hover += f"<br>  📋 Total Filed: {total:,}"
+                hover += f"<br>  📊 Rate: {row.get('approval_pct', 90.0):.1f}%"
+            else:
+                hover += f"<br>Approval Rate: {row.get('approval_pct', 90.0):.1f}%"
+            
+            hover_texts.append(hover)
         
-        if not df.empty:
-            fig = go.Figure()
+        fig_sponsors.add_trace(go.Scatter(
+            x=sponsors_df['approval_pct'].fillna(90.0),
+            y=sponsors_df['company'],
+            mode='markers',
+            marker=dict(
+                size=sponsors_df['bubble_size'],
+                color=sponsors_df['approval_pct'].fillna(90.0),
+                colorscale='Blues',
+                showscale=True,
+                colorbar=dict(title="Approval Rate (%)"),
+                cmin=80,
+                cmax=100,
+                line=dict(color='white', width=1.5)
+            ),
+            customdata=hover_texts,
+            hovertemplate='%{customdata}<extra></extra>'
+        ))
+
+        fig_sponsors.update_layout(
+            height=500,
+            xaxis_title="H-1B Approval Rate (%)",
+            yaxis_title="",
+            xaxis=dict(range=[80, 100]),
+            showlegend=False,
+        )
+
+        # Add threshold line at 90%
+        fig_sponsors.add_vline(x=90, line_dash="dash", line_color="#6b7280", annotation_text="90% Threshold")
+
+        st.plotly_chart(fig_sponsors, use_container_width=True)
+        
+        # Top sponsors table
+        col1, col2 = st.columns([3, 2])
+        
+        with col1:
+            st.markdown("#### 🎯 Top 10 H-1B Sponsors")
             
-            # Bubble chart: x=rank, y=approval rate, size=job count
-            max_jobs = df['job_count'].max()
-            df['bubble_size'] = (df['job_count'] / max_jobs * 40) + 15
+            # Prepare display table with breakdown
+            display_cols = ['company', 'job_count']
+            if 'h1b_certified' in sponsors_df.columns and 'h1b_applications' in sponsors_df.columns:
+                display_cols.extend(['h1b_certified', 'h1b_applications', 'approval_pct'])
+            else:
+                display_cols.append('approval_pct')
             
-            fig.add_trace(go.Scatter(
-                x=list(range(1, len(df)+1)),
-                y=df['avg_approval_rate'],
-                mode='markers+text',
-                marker=dict(
-                    size=df['bubble_size'],
-                    color=df['avg_approval_rate'],
-                    colorscale='RdYlGn',
-                    showscale=True,
-                    colorbar=dict(title="Approval<br>Rate %"),
-                    line=dict(color='white', width=2)
-                ),
-                text=df['company'].apply(lambda x: x[:15] + '...' if len(x) > 15 else x),
-                textposition='top center',
-                hovertemplate='<b>%{text}</b><br>Approval Rate: %{y:.1f}%<br>Open Jobs: ' + df['job_count'].astype(str) + '<extra></extra>'
-            ))
+            display_sponsors = sponsors_df[display_cols].head(10).copy()
             
-            # Add 90% threshold line
-            fig.add_hline(y=90, line_dash="dash", line_color="gray", 
-                          annotation_text="90% Safe Threshold", annotation_position="bottom right")
-            
-            fig.update_layout(
-                title="H-1B Sponsors: Approval Rate vs Open Positions",
-                xaxis_title="Company Rank (by job count)",
-                yaxis_title="H-1B Approval Rate (%)",
-                height=500,
-                yaxis=dict(range=[min(df['avg_approval_rate'].min()-5, 80), 105]),
-                showlegend=False
+            # Format the columns
+            if 'h1b_certified' in display_sponsors.columns:
+                display_sponsors['h1b_certified'] = display_sponsors['h1b_certified'].apply(
+                    lambda x: f"{int(x):,}" if pd.notnull(x) else "N/A"
+                )
+            if 'h1b_applications' in display_sponsors.columns:
+                display_sponsors['h1b_applications'] = display_sponsors['h1b_applications'].apply(
+                    lambda x: f"{int(x):,}" if pd.notnull(x) else "N/A"
+                )
+            display_sponsors['approval_pct'] = display_sponsors['approval_pct'].apply(
+                lambda x: f"{x:.1f}%" if pd.notnull(x) else "N/A"
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            # Rename columns for display
+            col_names = ['Company', 'Open Jobs']
+            if 'h1b_certified' in display_sponsors.columns:
+                col_names.extend(['✅ Approved', '📋 Total Filed', '📊 Rate'])
+            else:
+                col_names.append('Approval Rate')
+            display_sponsors.columns = col_names
             
-            # Top sponsors table
-            col1, col2 = st.columns([2, 1])
+            st.dataframe(display_sponsors, use_container_width=True, hide_index=True)
+            st.caption("**Formula:** Approval Rate = (✅ Approved / 📋 Total Filed) × 100")
+        
+        with col2:
+            st.markdown("#### 📊 Sponsorship Stats")
+            high_approval = len(sponsors_df[sponsors_df['approval_pct'] >= 95.0]) if 'approval_pct' in sponsors_df.columns else 0
+            avg_rate = sponsors_df['approval_pct'].mean() if 'approval_pct' in sponsors_df.columns else 0
+            total_sponsor_jobs = sponsors_df['job_count'].sum() if 'job_count' in sponsors_df.columns else 0
             
-            with col1:
-                st.markdown("### 🎯 Top 10 Safest H-1B Sponsors")
-                display_df = df.nlargest(10, 'avg_approval_rate')[['company', 'job_count', 'avg_approval_rate']].copy()
-                display_df['avg_approval_rate'] = display_df['avg_approval_rate'].apply(lambda x: f"{x:.1f}%")
-                display_df.columns = ['Company', 'Open Jobs', 'Approval Rate']
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.markdown(f"""
+            <div style='background: #f3f4f6; padding: 15px; border-radius: 8px; margin-bottom: 10px;'>
+                <div style='font-size: 12px; color: #6b7280;'>High Approval (≥95%)</div>
+                <div style='font-size: 32px; font-weight: bold; color: #10b981;'>{high_approval}</div>
+                <div style='font-size: 12px; color: #6b7280;'>companies</div>
+            </div>
             
-            with col2:
-                high_approval = len(df[df['avg_approval_rate'] >= 95])
-                avg_rate = df['avg_approval_rate'].mean()
-                
-                st.markdown(f"""
-                <div style='background: #f3f4f6; padding: 20px; border-radius: 12px; text-align: center;'>
-                    <div style='font-size: 3em; font-weight: bold; color: #10b981;'>{high_approval}</div>
-                    <div style='color: #6b7280;'>companies with 95%+ approval rate</div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                st.markdown(f"""
-                <div style='background: #f3f4f6; padding: 20px; border-radius: 12px; text-align: center; margin-top: 15px;'>
-                    <div style='font-size: 3em; font-weight: bold; color: #667eea;'>{avg_rate:.1f}%</div>
-                    <div style='color: #6b7280;'>average approval rate</div>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("📊 No H-1B sponsor data available with approval rates")
+            <div style='background: #f3f4f6; padding: 15px; border-radius: 8px; margin-bottom: 10px;'>
+                <div style='font-size: 12px; color: #6b7280;'>Avg Approval Rate</div>
+                <div style='font-size: 32px; font-weight: bold; color: #667eea;'>{avg_rate:.1f}%</div>
+            </div>
+            
+            <div style='background: #f3f4f6; padding: 15px; border-radius: 8px;'>
+                <div style='font-size: 12px; color: #6b7280;'>Total Sponsor Jobs</div>
+                <div style='font-size: 32px; font-weight: bold; color: #764ba2;'>{total_sponsor_jobs:,}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.info("💡 **About 100% Approval Rates:** Companies showing 100% may have small sample sizes (e.g., 1-10 applications). Hover over chart bubbles to see actual application volumes from USCIS data.")
     else:
-        st.info("📊 H-1B sponsor data is loading from backend...")
-else:
-    st.warning("⚠️ H-1B sponsor data temporarily unavailable")
+        st.info("No H-1B sponsor data available")
 
-# ============ FOOTER ============
+# Footer
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: #6b7280; padding: 20px;'>
-    <p>📊 Data sourced from 47K+ real job postings and USCIS H-1B filings</p>
-    <p>🔄 Analytics update automatically • Last refresh: Real-time</p>
+    <p>📊 Data updated in real-time from Snowflake database</p>
+    <p>🔄 Refresh this page to see latest statistics</p>
 </div>
 """, unsafe_allow_html=True)
