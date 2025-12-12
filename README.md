@@ -51,6 +51,7 @@ The Job Intelligence Platform is a production-ready system that automates the en
 5. **📊 Visualizes** trends, salaries, and company insights
 
 **Live Demo**: [Frontend](https://job-intelligence-frontend-97083220044.us-central1.run.app) • [API Docs](https://job-intelligence-backend-97083220044.us-central1.run.app/docs)
+**Code Lab**: https://codelabs-preview.appspot.com/?file_id=1IdCTMyAI9XGI3dAA2c7xzAaLcEPnVPqmRHvpz3LJE48#6
 
 ## ✨ Features
 
