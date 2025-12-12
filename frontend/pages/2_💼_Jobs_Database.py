@@ -248,10 +248,13 @@ with col_btn2:
 
 # Handle clear filters
 if clear_filters:
-    st.rerun()
-
-if clear_filters:
-    st.session_state.filters_applied = False
+    # Clear all filter session state keys
+    st.session_state.category_filter = []
+    st.session_state.company_filter = []
+    st.session_state.location_filter = []
+    st.session_state.work_filter = []
+    st.session_state.visa_filter = 'All'
+    st.session_state.date_filter = 'Any time'
     st.rerun()
 
 # Sort and Pagination options
