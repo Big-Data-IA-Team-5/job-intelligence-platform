@@ -4,7 +4,7 @@
 
 Watch a quick walkthrough of the platform:
 
-- YouTube: https://youtu.be/placeholder-demo-link
+- YouTube: [https://youtu.be/Kz1wW5NHUGU](https://youtu.be/Kz1wW5NHUGU)
 
 ### 📘 Code Lab
 
