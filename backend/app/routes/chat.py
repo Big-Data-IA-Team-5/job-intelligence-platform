@@ -36,22 +36,22 @@ class ChatRequest(BaseModel):
 async def ask_question(request: ChatRequest):
     """
     Intelligent chat endpoint powered by Agent 2's LLM reasoning.
-    
+
     Agent 2 has full intelligence with:
     - Complete database schema awareness (H1B_RAW, JOBS_PROCESSED, EMPLOYER_INTELLIGENCE)
     - LLM-powered intent detection (job_search, salary_info, h1b_sponsorship, etc.)
     - Resume context integration for personalized matching
     - Entity extraction (job_title, location, company, skills)
     - Multi-intent routing (job search, salary analysis, H-1B sponsorship, contact info, comparisons)
-    
+
     This endpoint simply passes requests to Agent 2's intelligence.
-    
+
     Parameters:
     - question: User's natural language query
     - resume_text: User's resume text for context (persists in conversation)
     - user_id: User identifier for conversation tracking
     - chat_history: Previous conversation context
-    
+
     Examples:
     - "data engineer jobs in Boston" → Agent 2 detects job_search, extracts entities, calls Agent 1
     - "what's the salary for SDE at Amazon?" → Agent 2 detects salary_info, queries H-1B data
@@ -60,25 +60,25 @@ async def ask_question(request: ChatRequest):
     """
     if not request.question or len(request.question.strip()) < 3:
         raise HTTPException(400, "Question too short")
-    
+
     logger.info(f"🔍 User {request.user_id} asked: '{request.question}'")
-    
+
     if request.resume_text:
         logger.info(f"📄 Resume context provided ({len(request.resume_text)} chars)")
-    
+
     # Use chat_history from request (default to empty list if not provided)
     chat_hist = request.chat_history if request.chat_history is not None else []
     logger.info(f"💬 Using chat history: {len(chat_hist)} messages")
-    
+
     agent = JobIntelligenceAgent()
-    
+
     try:
         # Agent 2 handles ALL intelligence - intent detection, entity extraction, routing
         # Resume text is passed and persists in conversation context
         # Use chat_history from frontend (context manager) for better context awareness
         # Enable debug info for frontend AI intelligence display
         result = agent.ask(request.question, resume_context=request.resume_text, chat_history=chat_hist, return_debug=True)
-        
+
         # Store interaction for future context (merge with incoming history if provided)
         # Build current conversation turn for client to store
         current_turn = {
@@ -86,10 +86,10 @@ async def ask_question(request: ChatRequest):
             "assistant": result['answer'],
             "has_resume": bool(request.resume_text)
         }
-        
+
         # Return updated chat history for client to manage (keep last 10 turns)
         updated_chat_history = (chat_hist[-9:] if chat_hist else []) + [current_turn]
-        
+
         # Return response with updated chat history for client
         response = {
             "question": request.question,
@@ -100,17 +100,17 @@ async def ask_question(request: ChatRequest):
             "confidence": result.get('confidence', 0.0),
             "sources": result.get('sources', [])
         }
-        
+
         # Include debug_info if present (for AI intelligence display in frontend)
         if 'debug_info' in result:
             response['debug_info'] = result['debug_info']
-        
+
         return response
-        
+
     except Exception as e:
         logger.error(f"❌ Error: {e}")
         raise HTTPException(500, f"Error: {str(e)}")
-    
+
     finally:
         agent.close()
 
@@ -120,22 +120,22 @@ async def parse_query_with_llm(query: str):
     """
     Use Snowflake Cortex LLM to intelligently parse user query.
     Extracts job role, intent, and reformulates question if needed.
-    
+
     Examples:
-    - "give me average salary of SDE role and jobs" 
+    - "give me average salary of SDE role and jobs"
       → job_role: "Software Development Engineer", clean_query: "What is the average salary for Software Development Engineer?"
     - "ML engineer compensation"
       → job_role: "Machine Learning Engineer", clean_query: "What is the compensation for Machine Learning Engineer?"
     """
     if not query or len(query.strip()) < 2:
         raise HTTPException(400, "Query too short")
-    
+
     import snowflake.connector
     import os
     from dotenv import load_dotenv
-    
+
     load_dotenv('config/.env')
-    
+
     try:
         conn = snowflake.connector.connect(
             account=os.getenv('SNOWFLAKE_ACCOUNT'),
@@ -145,9 +145,9 @@ async def parse_query_with_llm(query: str):
             schema='processed',
             warehouse='compute_wh'
         )
-        
+
         cursor = conn.cursor()
-        
+
         # Use Snowflake Cortex LLM to parse the query
         llm_query = f"""
         SELECT SNOWFLAKE.CORTEX.COMPLETE(
@@ -169,14 +169,14 @@ async def parse_query_with_llm(query: str):
             )
         ) as llm_response
         """
-        
+
         cursor.execute(llm_query)
         result = cursor.fetchone()
-        
+
         if result and result[0]:
             # Parse LLM response
             llm_response = result[0]
-            
+
             # Try to extract JSON from response
             try:
                 # Sometimes LLM wraps in markdown code blocks
@@ -184,13 +184,13 @@ async def parse_query_with_llm(query: str):
                     llm_response = llm_response.split('```json')[1].split('```')[0]
                 elif '```' in llm_response:
                     llm_response = llm_response.split('```')[1].split('```')[0]
-                
+
                 import json
                 parsed = json.loads(llm_response.strip())
-                
+
                 cursor.close()
                 conn.close()
-                
+
                 return {
                     "original_query": query,
                     "job_role": parsed.get("job_role", ""),
@@ -211,13 +211,13 @@ async def parse_query_with_llm(query: str):
                     "search_term": query,
                     "success": False
                 }
-        
+
         cursor.close()
         conn.close()
-        
+
     except Exception as e:
         raise HTTPException(500, f"LLM parsing failed: {str(e)}")
-    
+
     return {
         "original_query": query,
         "job_role": "",
@@ -234,7 +234,7 @@ async def smart_query(query: str):
     Smart endpoint that automatically detects intent and routes to either:
     - Job search (returns job listings)
     - AI chat (returns insights/answers)
-    
+
     Examples:
     - "software engineer at Google" → Job Search
     - "Who to contact at Amazon for H-1B?" → AI Chat
@@ -243,9 +243,9 @@ async def smart_query(query: str):
     """
     if not query or len(query.strip()) < 2:
         raise HTTPException(400, "Query too short")
-    
+
     intent = detect_intent(query)
-    
+
     return {
         "query": query,
         "intent": intent,

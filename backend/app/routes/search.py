@@ -11,7 +11,7 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["Job Search"])
 
-@router.get("/search", 
+@router.get("/search",
     response_model=SearchResponse,
     responses={
         400: {"model": ErrorResponse},
@@ -35,13 +35,13 @@ async def search_jobs(
 ):
     """
     Search jobs using natural language with enhanced H-1B filtering
-    
+
     **Examples:**
     - `/api/search?query=CPT internships in Boston`
     - `/api/search?query=data engineer&salary_min=80000&h1b_sponsor=true`
     - `/api/search?query=software engineer&visa_status=H-1B&min_approval_rate=0.8`
     - `/api/search?query=entry level jobs&new_grad_only=true`
-    
+
     **Parameters:**
     - **query**: Natural language search (required)
     - **visa_status**: Filter by visa eligibility (CPT, OPT, H-1B, US-Only)
@@ -57,25 +57,25 @@ async def search_jobs(
     - **new_grad_only**: Entry level / new grad roles only
     - **company_size**: Company size category
     - **limit**: Number of results (max 100)
-    
+
     **Returns:**
     - List of matching jobs with H-1B data
     - Total count
     - Query details
     """
-    
+
     # Validate inputs
     if visa_status and visa_status not in ['CPT', 'OPT', 'H-1B', 'US-Only']:
         raise HTTPException(
             status_code=400,
             detail="visa_status must be CPT, OPT, H-1B, or US-Only"
         )
-    
+
     agent = None
     try:
         # Initialize Agent 1
         agent = AgentManager.get_search_agent()
-        
+
         # Build filters
         filters = {}
         if visa_status:
@@ -103,17 +103,17 @@ async def search_jobs(
         if company_size:
             filters['company_size'] = company_size
         filters['limit'] = limit
-        
+
         # Search
         result = agent.search(query, filters)
-        
+
         # Check result
         if result['status'] == 'error':
             raise HTTPException(
                 status_code=400,
                 detail=result.get('error', 'Search failed')
             )
-        
+
         # Convert to response model with H-1B data
         jobs = [
             JobResponse(
@@ -144,7 +144,7 @@ async def search_jobs(
             )
             for job in result.get('jobs', [])
         ]
-        
+
         return SearchResponse(
             status="success",
             query=result['query'],
@@ -152,7 +152,7 @@ async def search_jobs(
             jobs=jobs,
             sql=result.get('sql')  # For debugging
         )
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -161,7 +161,7 @@ async def search_jobs(
             status_code=500,
             detail=f"Search failed: {str(e)}"
         )
-    
+
     finally:
         if agent:
             agent.close()

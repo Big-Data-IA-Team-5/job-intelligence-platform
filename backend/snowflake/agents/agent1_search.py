@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class JobSearchAgent:
     """
     Agent 1: Natural language job search.
-    
+
     Features:
     - Natural language query parsing
     - 20+ searchable fields
@@ -27,7 +27,7 @@ class JobSearchAgent:
     - Remote/hybrid filtering
     - Enhanced field support
     """
-    
+
     def __init__(self):
         """Initialize Snowflake connection."""
         # Load environment
@@ -45,7 +45,7 @@ class JobSearchAgent:
             os.environ['SNOWFLAKE_PASSWORD'] = sf_config['password']
             os.environ['SNOWFLAKE_DATABASE'] = sf_config['database']
             os.environ['SNOWFLAKE_WAREHOUSE'] = sf_config['warehouse']
-        
+
         self.conn = snowflake.connector.connect(
             account=os.getenv('SNOWFLAKE_ACCOUNT'),
             user=os.getenv('SNOWFLAKE_USER'),
@@ -55,15 +55,15 @@ class JobSearchAgent:
             warehouse=os.getenv('SNOWFLAKE_WAREHOUSE', 'compute_wh')
         )
         logger.info("✅ Agent 1 initialized (Production Mode)")
-    
+
     def search(self, query: str, filters: Optional[Dict] = None) -> Dict:
         """
         Search jobs using natural language with LLM-powered query parsing.
-        
+
         Args:
             query: Natural language query
             filters: Optional dict with visa_status, location, salary_min, job_type, work_model
-            
+
         Returns:
             {"status": "success", "jobs": [...], "total": int, "sql": "..."}
         """
@@ -73,37 +73,37 @@ class JobSearchAgent:
                 "status": "error",
                 "error": "Query cannot be empty"
             }
-        
+
         if len(query) > 500:
             return {
                 "status": "error",
                 "error": "Query too long (max 500 characters)"
             }
-        
+
         cursor = self.conn.cursor()
-        
+
         try:
             # DEBUG: Verify table exists and has data
             cursor.execute("SELECT COUNT(*) FROM jobs_processed")
             table_count = cursor.fetchone()[0]
             logger.info(f"🗄️  JOBS_PROCESSED table has {table_count} total rows")
-            
+
             # Use LLM to parse the query
             parsed_query = self._parse_query_with_llm(query, cursor)
-            
+
             # Build SQL with LLM-parsed intent
             sql = self._build_sql_from_parsed_query(parsed_query, filters or {})
-            
+
             # DEBUG: Log the SQL being executed
             logger.info(f"🔍 Executing SQL (full query):\n{sql}")
-            
+
             cursor.execute(sql)
             columns = [col[0] for col in cursor.description]
             results = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            
+
             # DEBUG: Log row count before deduplication
             logger.info(f"📊 SQL returned {len(results)} rows from database")
-            
+
             # Deduplicate jobs by title + company + location
             seen = set()
             unique_results = []
@@ -117,9 +117,9 @@ class JobSearchAgent:
                 if key not in seen:
                     seen.add(key)
                     unique_results.append(job)
-            
+
             logger.info(f"✅ Found {len(unique_results)} unique jobs (from {len(results)} total) for: {query}")
-            
+
             return {
                 "status": "success",
                 "query": query,
@@ -127,7 +127,7 @@ class JobSearchAgent:
                 "jobs": unique_results,
                 "total": len(unique_results)
             }
-            
+
         except Exception as e:
             logger.error(f"❌ Search failed: {e}")
             return {
@@ -137,12 +137,12 @@ class JobSearchAgent:
             }
         finally:
             cursor.close()
-    
+
     def _parse_query_with_llm(self, query: str, cursor) -> Dict:
         """
         Use Snowflake Cortex FLAGSHIP LLM (mistral-large2) for text-to-SQL query parsing.
         Industry-level accuracy for complex natural language understanding.
-        
+
         Returns:
             {
                 "job_titles": ["software engineer", "qa engineer"],
@@ -164,8 +164,8 @@ Your task is to parse natural language into precise structured parameters for da
 
 **DATABASE SCHEMA:**
 Table: JOBS_PROCESSED (22,339 jobs)
-Columns: title, company, location, description, requirements, skills, experience_level, 
-         education_level, job_type, work_model, visa_category, h1b_sponsor, salary_min, 
+Columns: title, company, location, description, requirements, skills, experience_level,
+         education_level, job_type, work_model, visa_category, h1b_sponsor, salary_min,
          salary_max, job_category, is_new_grad, approval_rate, date_posted
 
 **PARSING RULES - CRITICAL:
@@ -183,7 +183,7 @@ Extract these fields:
 - company: company name if mentioned (e.g., "Amazon", "Google", "Microsoft"), or null
 - location: city or state if mentioned
 - visa_type: CPT, OPT, H-1B, or null
-- work_model: remote, hybrid, onsite, or null  
+- work_model: remote, hybrid, onsite, or null
 - job_type: internship, full-time, part-time, contract, or null
 - job_category: Engineering, Data, Product, Design, Sales, Marketing, Operations, or null
 - new_grad_only: true if entry-level/new-grad focus, false otherwise
@@ -201,23 +201,23 @@ Examples:
 
 Return ONLY a valid JSON object.
 """
-            
+
             llm_sql = f"""
                 SELECT SNOWFLAKE.CORTEX.COMPLETE(
                     'mistral-large2',
                     '{prompt.replace("'", "''")}'
                 ) as parsed_query
             """
-            
+
             cursor.execute(llm_sql)
             result = cursor.fetchone()
-            
+
             if result and result[0]:
                 llm_response = result[0].strip()
                 # Extract JSON from response (LLM might add explanation text)
                 import json
                 import re
-                
+
                 # Try to find JSON object in response
                 json_match = re.search(r'\{[^}]+\}', llm_response)
                 if json_match:
@@ -227,19 +227,19 @@ Return ONLY a valid JSON object.
                 else:
                     logger.warning(f"⚠️  LLM response not valid JSON: {llm_response[:100]}")
                     return {"job_titles": [query], "location": None}
-            
+
         except Exception as e:
             logger.warning(f"⚠️  LLM parsing failed: {e}, falling back to keyword extraction")
-        
+
         # Fallback to simple extraction
         return {"job_titles": [query], "location": None}
-    
+
     def _build_sql_from_parsed_query(self, parsed: Dict, filters: Dict) -> str:
         """Build SQL query from LLM-parsed search intent with enhanced scoring."""
-        
+
         # Base SELECT with deduplication and relevance scoring
         sql = """
-            SELECT 
+            SELECT
                 j.job_id, j.url, j.title, j.company_clean as company, j.location,
                 j.description, j.salary_min, j.salary_max, j.job_type, j.visa_category,
                 j.h1b_sponsor, j.days_since_posted, j.work_model, j.department,
@@ -258,7 +258,7 @@ Return ONLY a valid JSON object.
                     (CASE WHEN j.salary_min IS NOT NULL THEN 2 ELSE 0 END) +
                     (CASE WHEN j.days_since_posted <= 7 THEN 5 WHEN j.days_since_posted <= 30 THEN 2 ELSE 0 END)
         """
-        
+
         # Add resume skill matching to relevance score if provided
         resume_skills = filters.get('resume_skills', [])
         if resume_skills:
@@ -272,10 +272,10 @@ Return ONLY a valid JSON object.
                     f"OR LOWER(j.qualifications) LIKE '%{sanitized_skill.lower()}%' "
                     f"THEN 20 ELSE 0 END)"
                 )
-            
+
             if skill_checks:
                 sql += " +\n                    " + " +\n                    ".join(skill_checks)
-        
+
         sql += """
                 ) as relevance_score
             FROM (
@@ -292,7 +292,7 @@ Return ONLY a valid JSON object.
                 AND j.location NOT LIKE '%Canada%'
                 AND j.location NOT LIKE '%Mexico%'
         """
-        
+
         # Add job title filters from LLM parsing
         job_titles = parsed.get('job_titles', [])
         if job_titles and job_titles[0]:  # Check if not empty list or None
@@ -302,16 +302,16 @@ Return ONLY a valid JSON object.
                 if title:  # Skip empty/None titles
                     sanitized_title = str(title).replace("'", "''")
                     title_conditions.append(f"j.title ILIKE '%{sanitized_title}%'")
-            
+
             if title_conditions:
                 sql += f" AND ({' OR '.join(title_conditions)})"
-        
+
         # Add company filter from LLM
         company = parsed.get('company')
         if company:
             sanitized_company = str(company).replace("'", "''")
             sql += f" AND UPPER(j.company_clean) LIKE '%{sanitized_company.upper()}%'"
-        
+
         # Add company list filter from context (e.g., "jobs in these companies")
         company_list = filters.get('companies', [])
         if company_list:
@@ -320,31 +320,31 @@ Return ONLY a valid JSON object.
                 sanitized = str(comp).replace("'", "''").strip()
                 if sanitized:
                     company_conditions.append(f"UPPER(j.company_clean) LIKE '%{sanitized.upper()}%'")
-            
+
             if company_conditions:
                 sql += f" AND ({' OR '.join(company_conditions)})"
-        
+
         # Add location filter from LLM
         location = parsed.get('location')
         if location:
             sanitized_location = str(location).replace("'", "''")
             sql += f" AND j.location ILIKE '%{sanitized_location}%'"
-        
+
         # Add visa type filter from LLM
         visa_type = parsed.get('visa_type')
         if visa_type and visa_type in ['CPT', 'OPT', 'H-1B', 'US-Only']:
             sql += f" AND j.visa_category = '{visa_type}'"
-        
+
         # Add H-1B requirement filter
         h1b_required = parsed.get('h1b_required', False)
         if h1b_required:
             sql += " AND j.h1b_sponsor = TRUE"
-        
+
         # Add minimum approval rate filter
         min_approval_rate = parsed.get('min_approval_rate')
         if min_approval_rate:
             sql += f" AND j.h1b_approval_rate >= {min_approval_rate}"
-        
+
         # DISABLED: job_category filter is unreliable - most jobs have NULL or empty values
         # Many "Data Engineer" jobs are categorized as "Engineering" or have no category
         # Rely on job title matching instead for better results
@@ -352,12 +352,12 @@ Return ONLY a valid JSON object.
         # if job_category:
         #     sanitized_category = str(job_category).replace("'", "''")
         #     sql += f" AND (job_category = '{sanitized_category}' OR job_category IS NULL OR job_category = '')"
-        
+
         # Add new grad filter
         new_grad_only = parsed.get('new_grad_only', False)
         if new_grad_only:
             sql += " AND j.is_new_grad_role = TRUE"
-        
+
         # Add work model filter from LLM
         work_model = parsed.get('work_model')
         if work_model:
@@ -365,86 +365,86 @@ Return ONLY a valid JSON object.
             if work_model_normalized == 'Onsite':
                 work_model_normalized = 'On-site'
             sql += f" AND j.work_model = '{work_model_normalized}'"
-        
+
         # Add job type filter from LLM
         job_type = parsed.get('job_type')
         if job_type:
             sanitized_job_type = str(job_type).replace("'", "''")
             sql += f" AND j.job_type ILIKE '%{sanitized_job_type}%'"
-        
+
         # Apply additional filters from API params
         if filters.get('visa_status'):
             visa = filters['visa_status']
             if visa in ['CPT', 'OPT', 'H-1B', 'US-Only']:
                 sql += f" AND j.visa_category = '{visa}'"
-        
+
         if filters.get('location'):
             loc = str(filters['location']).replace("'", "''")
             sql += f" AND j.location ILIKE '%{loc}%'"
-        
+
         if filters.get('salary_min'):
             try:
                 salary = int(filters['salary_min'])
                 sql += f" AND j.salary_min >= {salary}"
             except (ValueError, TypeError):
                 pass
-        
+
         if filters.get('salary_max'):
             try:
                 max_sal = int(filters['salary_max'])
                 sql += f" AND j.salary_max <= {max_sal}"
             except (ValueError, TypeError):
                 pass
-        
+
         if filters.get('work_model'):
             wm = str(filters['work_model']).replace("'", "''")
             work_model_normalized = wm.title()
             if work_model_normalized == 'Onsite':
                 work_model_normalized = 'On-site'
             sql += f" AND j.work_model = '{work_model_normalized}'"
-        
+
         if filters.get('h1b_sponsor'):
             sql += " AND j.h1b_sponsor = TRUE"
-        
+
         if filters.get('min_approval_rate'):
             try:
                 rate = float(filters['min_approval_rate'])
                 sql += f" AND j.h1b_approval_rate >= {rate}"
             except (ValueError, TypeError):
                 pass
-        
+
         if filters.get('min_petitions'):
             try:
                 petitions = int(filters['min_petitions'])
                 sql += f" AND j.h1b_total_petitions >= {petitions}"
             except (ValueError, TypeError):
                 pass
-        
+
         if filters.get('new_grad_only'):
             sql += " AND j.is_new_grad_role = TRUE"
-        
+
         if filters.get('job_category'):
             cat = str(filters['job_category']).replace("'", "''")
             sql += f" AND j.job_category = '{cat}'"
-        
+
         if filters.get('company_size'):
             cs = str(filters['company_size']).replace("'", "''")
             sql += f" AND j.company_size = '{cs}'"
-        
+
         # Order by relevance score (better sponsors, recent, remote) and limit
         limit = filters.get('limit', 20)
         sql += f"\n            ORDER BY relevance_score DESC, j.days_since_posted ASC\n            LIMIT {min(int(limit), 100)}"
-        
+
         return sql
-    
-    
+
+
     def get_stats(self) -> Dict:
         """Get comprehensive database statistics."""
         cursor = self.conn.cursor()
-        
+
         try:
             sql = """
-                SELECT 
+                SELECT
                     COUNT(*) as total_jobs,
                     COUNT(DISTINCT j.company_clean) as total_companies,
                     COUNT_IF(j.visa_category = 'CPT') as cpt_jobs,
@@ -463,16 +463,16 @@ Return ONLY a valid JSON object.
                 ) j
                 WHERE j.row_num = 1
             """
-            
+
             cursor.execute(sql)
             result = cursor.fetchone()
             columns = [col[0] for col in cursor.description]
-            
+
             return dict(zip(columns, result))
-            
+
         finally:
             cursor.close()
-    
+
     def close(self):
         """Close connection."""
         if self.conn:

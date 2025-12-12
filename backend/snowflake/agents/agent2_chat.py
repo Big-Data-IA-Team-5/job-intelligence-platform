@@ -26,7 +26,7 @@ from snowflake.agents.cache_manager import get_cache
 
 class ConversationState:
     """Manages conversation context across multiple turns."""
-    
+
     def __init__(self):
         self.last_intent = None
         self.last_job_title = None
@@ -36,7 +36,7 @@ class ConversationState:
         self.query_count = 0
         self.last_result_count = 0
         self.timestamp = datetime.now()
-    
+
     def update(self, intent_analysis: Dict, result_count: int = 0):
         """Update state with latest query information."""
         self.last_intent = intent_analysis.get('intent')
@@ -47,12 +47,12 @@ class ConversationState:
         self.last_result_count = result_count
         self.query_count += 1
         self.timestamp = datetime.now()
-    
+
     def should_expand_search(self) -> bool:
         """Determine if search should be expanded based on state."""
         # If last query returned few results and had location, try nationwide
         return self.last_result_count < 5 and self.last_location is not None
-    
+
     def get_context_summary(self) -> str:
         """Get summary of conversation state for logging."""
         return f"Intent: {self.last_intent}, Title: {self.last_job_title}, Location: {self.last_location}, Keywords: {self.last_keywords}, Results: {self.last_result_count}"
@@ -60,7 +60,7 @@ class ConversationState:
 
 class TelemetryTracker:
     """Tracks patterns and performance metrics."""
-    
+
     def __init__(self):
         self.follow_up_patterns = {}  # Track "more" requests and their success
         self.intent_counts = {}
@@ -68,7 +68,7 @@ class TelemetryTracker:
         self.fallback_triggers = 0
         self.cache_hits = 0
         self.cache_misses = 0
-    
+
     def track_query(self, intent: str, duration: float, result_count: int, used_cache: bool = False):
         """Track query execution."""
         self.intent_counts[intent] = self.intent_counts.get(intent, 0) + 1
@@ -77,7 +77,7 @@ class TelemetryTracker:
             self.cache_hits += 1
         else:
             self.cache_misses += 1
-    
+
     def track_follow_up(self, pattern: str, success: bool, expanded_from: str = None):
         """Track follow-up request patterns."""
         if pattern not in self.follow_up_patterns:
@@ -87,12 +87,12 @@ class TelemetryTracker:
             self.follow_up_patterns[pattern]['success'] += 1
         if expanded_from:
             self.follow_up_patterns[pattern]['expansions'].append(expanded_from)
-    
+
     def track_fallback(self, from_agent: str, to_agent: str, reason: str):
         """Track when fallback to Agent 4 is triggered."""
         self.fallback_triggers += 1
         logger.info(f"📊 FALLBACK: {from_agent} → {to_agent} ({reason})")
-    
+
     def get_stats(self) -> Dict:
         """Get telemetry statistics."""
         avg_time = sum(self.query_times) / len(self.query_times) if self.query_times else 0
@@ -109,7 +109,7 @@ class TelemetryTracker:
 
 class JobIntelligenceAgent:
     """Production-ready chat agent with distributed caching, telemetry, and state management."""
-    
+
     def __init__(self):
         self.conn = snowflake.connector.connect(
             account=os.getenv('SNOWFLAKE_ACCOUNT'),
@@ -121,16 +121,16 @@ class JobIntelligenceAgent:
         )
         # Conversation state per user session (in-memory, per container)
         self.conversation_states = {}  # {user_id: ConversationState}
-        
+
         # Telemetry tracker (in-memory, per container)
         self.telemetry = TelemetryTracker()
-        
+
         # Distributed cache manager (Redis + in-memory fallback)
         self.cache = get_cache()
         self.cache_ttl = 300  # 5 minutes cache TTL
-        
+
         logger.info("✅ Agent 2 (Chat Intelligence) initialized with distributed caching & telemetry")
-    
+
     def _get_cache_key(self, question: str, resume_context: str = None, chat_history: list = None) -> str:
         """Generate cache key for LLM responses."""
         # Create hash from question + resume + recent history
@@ -141,7 +141,7 @@ class JobIntelligenceAgent:
             # Include last query for context
             cache_input += f"|history:{chat_history[-1].get('user', '')}"
         return hashlib.md5(cache_input.encode()).hexdigest()
-    
+
     def _get_cached_analysis(self, cache_key: str) -> Optional[Dict]:
         """Retrieve cached LLM analysis from distributed cache."""
         cached_data = self.cache.get('llm_intent', cache_key)
@@ -150,22 +150,22 @@ class JobIntelligenceAgent:
             return cached_data
         self.telemetry.cache_misses += 1
         return None
-    
+
     def _cache_analysis(self, cache_key: str, analysis: Dict):
         """Store LLM analysis in distributed cache."""
         self.cache.set('llm_intent', cache_key, analysis, ttl=self.cache_ttl)
-    
+
     def _analyze_intent_with_llm(self, question: str, resume_context: str = None, chat_history: list = None) -> Dict:
         """Use Snowflake Cortex LLM to analyze user intent and extract entities with full schema awareness, resume context, and conversation history."""
-        
+
         # Check cache first
         cache_key = self._get_cache_key(question, resume_context, chat_history)
         cached_analysis = self._get_cached_analysis(cache_key)
         if cached_analysis:
             return cached_analysis
-        
+
         cursor = self.conn.cursor()
-        
+
         try:
             # Build chat history context for follow-up questions
             history_section = ""
@@ -175,7 +175,7 @@ class JobIntelligenceAgent:
                 for msg in chat_history[-3:]:  # Last 3 messages for context
                     history_section += f"User: {msg.get('user', '')}\n"
                     history_section += f"Assistant: {msg.get('assistant', '')[:200]}...\n"
-                    
+
                     # Extract previous location for "more" detection
                     if 'location' in msg.get('user', '').lower() or 'in ' in msg.get('user', ''):
                         # Try to extract location from previous query
@@ -183,17 +183,17 @@ class JobIntelligenceAgent:
                         if ' in ' in user_text.lower():
                             potential_location = user_text.lower().split(' in ')[-1].split()[0]
                             previous_location = potential_location.capitalize()
-                
+
                 history_section += f"\n**Previous search location:** {previous_location or 'Not specified'}\n\n"
                 history_section += """**IMPORTANT - Use conversation history to:**
 1. Resolve pronouns: "this company" → refer to company mentioned earlier
-2. Infer missing entities: "whom to contact" → use company from previous query  
+2. Infer missing entities: "whom to contact" → use company from previous query
 3. Understand follow-ups: "attorney" → if previous was about company X, find attorney for company X
 4. Track context: if user asked about Dassault, next queries likely about Dassault
 5. **DETECT "MORE" REQUESTS:** If user says "give me more", "show more", "find more" and previous had location → SET LOCATION TO NULL to expand search
 
 """
-            
+
             # Add resume context if available
             resume_section = ""
             if resume_context:
@@ -343,15 +343,15 @@ Respond ONLY with the JSON object, no other text."""
                 '{prompt.replace("'", "''")}'
             ) as analysis
             """
-            
+
             cursor.execute(sql)
             result = cursor.fetchone()
-            
+
             if result and result[0]:
                 # Parse LLM response
                 response_text = result[0].strip()
                 logger.info(f"🤖 LLM Response: {response_text[:500]}")
-                
+
                 # Extract JSON from response (LLM might add extra text)
                 json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
                 if json_match:
@@ -362,12 +362,12 @@ Respond ONLY with the JSON object, no other text."""
                     return analysis
                 else:
                     logger.warning(f"❌ No JSON found in LLM response")
-            
+
             logger.warning("❌ No result from LLM, using fallback")
             fallback_analysis = {"intent": "general", "job_title": None, "location": None, "company": None, "keywords": []}
             self._cache_analysis(cache_key, fallback_analysis)
             return fallback_analysis
-            
+
         except Exception as e:
             logger.error(f"❌ LLM intent analysis failed: {e}, falling back to regex")
             import traceback
@@ -377,19 +377,19 @@ Respond ONLY with the JSON object, no other text."""
             return fallback_analysis
         finally:
             cursor.close()
-    
+
     def ask(self, question: str, resume_context: str = None, chat_history: list = None, return_debug: bool = True, user_id: str = "default") -> Dict:
         """
         Answer questions using intelligent LLM-powered SQL generation with caching, telemetry, and state management.
-        
+
         NO HARDCODED ROUTING - LLM decides everything based on:
         - User's natural language query
         - Available database schema (H1B_RAW: 97 fields, JOBS_PROCESSED: 22+ fields)
         - Resume context and conversation history
         - Conversation state for follow-up handling
-        
+
         Supports ANY question about the data we have!
-        
+
         Args:
             question: User's natural language query
             resume_context: User's resume text for personalization
@@ -399,17 +399,17 @@ Respond ONLY with the JSON object, no other text."""
         """
         import time
         start_time = time.time()
-        
+
         # Get or create conversation state for this user
         if user_id not in self.conversation_states:
             self.conversation_states[user_id] = ConversationState()
         conv_state = self.conversation_states[user_id]
-        
+
         logger.info(f"📊 Conversation State: {conv_state.get_context_summary()}")
-        
+
         # Guardrail 0: Detect and handle casual greetings
         greeting_patterns = [
-            ('hey', 'Hey! 👋 How can I help you?'), 
+            ('hey', 'Hey! 👋 How can I help you?'),
             ('hello', 'Hello! 👋 How can I help you?'),
             ('hi', 'Hey! 👋 How can I help you?'),
             ('howdy', 'Howdy! 🤠 How can I help you?'),
@@ -420,7 +420,7 @@ Respond ONLY with the JSON object, no other text."""
             ('what\'s up', 'Not much! How can I help you?'),
             ('whats up', 'Not much! How can I help you?'),
         ]
-        
+
         question_lower = question.strip().lower()
         for pattern, response in greeting_patterns:
             if question_lower.startswith(pattern) or question_lower == pattern:
@@ -430,7 +430,7 @@ Respond ONLY with the JSON object, no other text."""
                     "confidence": 1.0,
                     "debug_info": {"greeting_detected": True} if return_debug else None
                 }
-        
+
         # Guardrail 1: Empty or very short queries
         if not question or len(question.strip()) < 3:
             return {
@@ -438,7 +438,7 @@ Respond ONLY with the JSON object, no other text."""
                 "data": [],
                 "confidence": 0.0
             }
-        
+
         # Guardrail 2: Detect gibberish or random characters
         if len(question.strip()) > 5:
             words = question.split()
@@ -450,7 +450,7 @@ Respond ONLY with the JSON object, no other text."""
                     "data": [],
                     "confidence": 0.0
                 }
-        
+
         # Initialize debug metadata
         debug_info = {
             "question": question,
@@ -458,32 +458,32 @@ Respond ONLY with the JSON object, no other text."""
             "has_chat_history": bool(chat_history),
             "steps": []
         }
-        
+
         logger.info(f"❓ Question: {question}")
         if resume_context:
             logger.info(f"📄 Resume context provided ({len(resume_context)} chars)")
         if chat_history:
             logger.info(f"💬 Chat history provided ({len(chat_history)} messages)")
-        
+
         # Step 1: LLM analyzes query and decides what to do
         debug_info["steps"].append({"step": "Intent Analysis", "status": "running"})
         try:
             intent_analysis = self._analyze_intent_with_llm(question, resume_context, chat_history)
             logger.info(f"🧠 LLM Analysis: {intent_analysis}")
-            
+
             # Post-process: Clean keywords and handle "more" requests
             meta_search_terms = {'more', 'other', 'different', 'additional', 'show', 'give', 'find', 'any', 'all', 'me', 'the'}
             if 'keywords' in intent_analysis and isinstance(intent_analysis['keywords'], list):
                 # Filter out meta-search terms from keywords
                 intent_analysis['keywords'] = [kw for kw in intent_analysis['keywords'] if kw.lower() not in meta_search_terms]
                 logger.info(f"🧹 Cleaned keywords: {intent_analysis['keywords']}")
-            
+
             # Handle "more" requests by extracting context from history
             if intent_analysis.get('is_more_request') or any(word in question.lower() for word in ['more', 'other', 'different', 'additional']):
                 if chat_history and len(chat_history) > 0:
                     # Extract previous job search parameters from last query
                     last_user_query = chat_history[-1].get('user', '')
-                    
+
                     # If no job_title was detected, try to extract from previous query
                     if not intent_analysis.get('job_title'):
                         for msg in reversed(chat_history[-3:]):
@@ -500,11 +500,11 @@ Respond ONLY with the JSON object, no other text."""
                                     if 'software' not in intent_analysis.get('keywords', []):
                                         intent_analysis['keywords'] = intent_analysis.get('keywords', []) + ['software', 'engineer']
                                 break
-                    
+
                     # Remove location to expand search nationwide
                     intent_analysis['location'] = None
                     logger.info(f"🔄 Expanded 'more' request: {intent_analysis}")
-            
+
             debug_info["intent_analysis"] = intent_analysis
             debug_info["steps"][-1]["status"] = "complete"
             debug_info["steps"][-1]["result"] = intent_analysis
@@ -518,9 +518,9 @@ Respond ONLY with the JSON object, no other text."""
                 "confidence": 0.0,
                 "debug_info": debug_info if return_debug else None
             }
-        
+
         intent = intent_analysis.get('intent', 'general')
-        
+
         # Guardrail 3: Check if intent was successfully detected
         if not intent or intent == 'unknown':
             return {
@@ -529,7 +529,7 @@ Respond ONLY with the JSON object, no other text."""
                 "confidence": 0.3,
                 "debug_info": debug_info if return_debug else None
             }
-        
+
         # Step 2: Route ONLY for special cases that need external tools
         if intent == 'resume_analysis':
             # Guardrail 4: Resume analysis requires resume
@@ -543,7 +543,7 @@ Respond ONLY with the JSON object, no other text."""
             debug_info["agent_used"] = "Agent 2 - Resume Analysis"
             debug_info["steps"].append({"step": "Resume Analysis", "status": "complete"})
             result = self._analyze_resume(question, resume_context)
-        
+
         elif intent == 'career_advice':
             # Guardrail 5: Career advice requires resume
             if not resume_context:
@@ -556,7 +556,7 @@ Respond ONLY with the JSON object, no other text."""
             debug_info["agent_used"] = "Agent 2 - Career Advisor"
             debug_info["steps"].append({"step": "Career Advice Generation", "status": "complete"})
             result = self._give_career_advice(question, resume_context, intent_analysis.get('resume_skills', []))
-        
+
         elif intent == 'job_search':
             # Use Agent 1 for job search (it has better search logic)
             debug_info["agent_used"] = "Agent 1 - Job Search"
@@ -564,30 +564,30 @@ Respond ONLY with the JSON object, no other text."""
             resume_skills = intent_analysis.get('resume_skills', [])
             job_title = intent_analysis.get('job_title')
             location = intent_analysis.get('location')
-            
+
             # Track if this is a follow-up "more" request
             is_follow_up = intent_analysis.get('is_more_request', False) or any(word in question.lower() for word in ['more', 'other', 'different'])
             if is_follow_up:
                 pattern = f"more_{job_title or 'any'}_{location or 'nationwide'}"
                 previous_context = f"{conv_state.last_job_title}_{conv_state.last_location}" if conv_state.last_job_title else "none"
                 logger.info(f"🔄 Follow-up pattern: {pattern} (from: {previous_context})")
-            
+
             # Extract company list from intent OR from chat history
             company_list = intent_analysis.get('company', [])
             if not company_list and chat_history:
                 # Look for company names in previous responses
                 company_list = self._extract_companies_from_history(chat_history)
                 logger.info(f"📜 Extracted {len(company_list)} companies from chat history: {company_list}")
-            
+
             result = self._search_jobs(question, job_title, location, resume_skills, resume_context, company_list)
-            
+
             # AGENT 4 FALLBACK: If keyword search returns no jobs and resume provided, use semantic matching
             result_count = len(result.get('data', [])) if result.get('status') == 'success' else 0
             if result_count == 0 and resume_context and not is_follow_up:
                 logger.warning(f"⚠️ Agent 1 returned {result_count} jobs, attempting Agent 4 semantic fallback...")
                 self.telemetry.track_fallback("Agent 1", "Agent 4", "zero_results_with_resume")
                 debug_info["steps"].append({"step": "Agent 4 Fallback", "status": "running", "reason": "zero_results"})
-                
+
                 try:
                     # Import Agent 4 for semantic matching
                     import sys
@@ -595,10 +595,10 @@ Respond ONLY with the JSON object, no other text."""
                     project_root = Path(__file__).parent.parent.parent
                     sys.path.insert(0, str(project_root))
                     from snowflake.agents.agent4_matcher import ResumeMatcherAgent
-                    
+
                     agent4 = ResumeMatcherAgent()
                     semantic_result = agent4.match_resume(resume_context, limit=10)
-                    
+
                     if semantic_result.get('status') == 'success' and len(semantic_result.get('jobs', [])) > 0:
                         logger.info(f"✅ Agent 4 found {len(semantic_result['jobs'])} jobs via semantic search!")
                         result = semantic_result
@@ -613,47 +613,47 @@ Respond ONLY with the JSON object, no other text."""
                     logger.error(f"❌ Agent 4 fallback failed: {e}")
                     debug_info["steps"][-1]["status"] = "error"
                     debug_info["steps"][-1]["error"] = str(e)
-            
+
             # Track follow-up success
             if is_follow_up:
                 pattern = f"more_{job_title or 'any'}"
                 success = result_count > 0
                 previous_context = f"{conv_state.last_job_title}" if conv_state.last_job_title else None
                 self.telemetry.track_follow_up(pattern, success, previous_context)
-        
+
         # Step 3: For ALL other queries, let LLM generate SQL dynamically
         else:
             debug_info["agent_used"] = "Agent 2 - Intelligent SQL Generator"
             logger.info(f"🤖 Using LLM to generate SQL for intent: {intent}")
             result = self._llm_generate_and_execute_sql(question, intent_analysis, resume_context, chat_history)
-            
+
             # Add SQL generation details to debug info
             if "sql_used" in result:
                 debug_info["sql_generated"] = result["sql_used"]
                 debug_info["steps"].append({"step": "SQL Generation", "status": "complete", "sql": result["sql_used"]})
-        
+
         # Add timing and debug info to result
         execution_time = time.time() - start_time
         debug_info["execution_time_ms"] = int(execution_time * 1000)
-        
+
         # Update conversation state with this query
         result_count = len(result.get('data', [])) if isinstance(result.get('data'), list) else 0
         conv_state.update(intent_analysis, result_count)
-        
+
         # Track telemetry
         used_cache = debug_info.get("intent_analysis", {}).get("_from_cache", False)
         self.telemetry.track_query(intent, execution_time, result_count, used_cache)
-        
+
         # Add telemetry stats to debug info if requested
         if return_debug:
             result["debug_info"] = debug_info
             result["debug_info"]["telemetry"] = self.telemetry.get_stats()
             result["debug_info"]["conversation_state"] = conv_state.get_context_summary()
-        
+
         logger.info(f"✅ Query completed in {execution_time:.2f}s, {result_count} results, Intent: {intent}")
-        
+
         return result
-    
+
     def _normalize_location_to_state(self, location: str) -> str:
         """Convert location names to state codes for H-1B database queries."""
         state_map = {
@@ -676,15 +676,15 @@ Respond ONLY with the JSON object, no other text."""
         }
         loc_lower = location.lower().strip()
         return state_map.get(loc_lower, location.upper()[:2])  # Default to first 2 chars uppercase
-    
+
     def _format_phone_number(self, phone: str) -> str:
         """Format phone number to US format: +1 (XXX) XXX-XXXX"""
         if not phone:
             return None
-        
+
         # Remove any non-digit characters
         digits = ''.join(c for c in str(phone) if c.isdigit())
-        
+
         # Handle 11-digit US phone numbers (starting with 1)
         if len(digits) == 11 and digits.startswith('1'):
             return f"+1 ({digits[1:4]}) {digits[4:7]}-{digits[7:]}"
@@ -694,31 +694,31 @@ Respond ONLY with the JSON object, no other text."""
         # Return as-is if format doesn't match
         else:
             return phone
-    
+
     def _get_contact_info(self, company: str, location: str = None) -> Dict:
         """Get employer + attorney contact information by company or location."""
         logger.info(f"🔍 _get_contact_info called with company='{company}' (type: {type(company)}), location='{location}' (type: {type(location)})")
-        
+
         # Handle empty strings as None
         company = company if company and company.strip() else None
         location = location if location and location.strip() else None
-        
+
         logger.info(f"🔍 After cleaning: company={company}, location={location}")
-        
+
         if not company and not location:
             return self._error_response("Please specify a company name or location.")
-        
+
         cursor = self.conn.cursor()
-        
+
         try:
             # If location provided without company, search for top attorneys in that location
             if location and not company:
                 # Normalize location to state code
                 state_code = self._normalize_location_to_state(location)
                 logger.info(f"🔍 Normalized location '{location}' to state code '{state_code}'")
-                
+
                 sql = f"""
-                SELECT 
+                SELECT
                     lawfirm_name_business_name,
                     agent_attorney_first_name,
                     agent_attorney_last_name,
@@ -733,23 +733,23 @@ Respond ONLY with the JSON object, no other text."""
                 WHERE (worksite_state = '{state_code}' OR worksite_city ILIKE '%{location}%')
                   AND agent_attorney_email_address IS NOT NULL
                   AND lawfirm_name_business_name IS NOT NULL
-                GROUP BY lawfirm_name_business_name, agent_attorney_first_name, agent_attorney_last_name, 
+                GROUP BY lawfirm_name_business_name, agent_attorney_first_name, agent_attorney_last_name,
                          agent_attorney_email_address, agent_attorney_phone, worksite_city, worksite_state
                 HAVING total_cases >= 10
                 ORDER BY total_cases DESC, approval_rate DESC
                 LIMIT 10
                 """
-                
+
                 cursor.execute(sql)
                 results = cursor.fetchall()
-                
+
                 if not results:
                     return self._error_response(f"No immigration attorney data found for {location}")
-                
+
                 # Format attorney list
                 answer = f"### 👔 Top Immigration Attorneys in {location}\n\n"
                 answer += f"Found {len(results)} top attorneys specializing in H-1B cases:\n\n"
-                
+
                 for i, data in enumerate(results[:5], 1):
                     answer += f"## {i}. {data[1]} {data[2]}\n\n"
                     answer += f"**🏢 Law Firm:** {data[0]}  \n"
@@ -761,22 +761,22 @@ Respond ONLY with the JSON object, no other text."""
                     answer += f"**📊 Cases Handled:** {data[7]} total cases  \n"
                     answer += f"**✅ Approval Rate:** {data[9]}%  \n\n"
                     answer += "---\n\n"
-                
+
                 answer += "### 💡 Next Steps\n\n"
                 answer += f"1. **Contact** top-rated attorneys via email  \n"
                 answer += f"2. **Mention** you need H-1B sponsorship assistance  \n"
                 answer += f"3. **Ask** about their experience with your industry  \n"
-                
+
                 return {
                     "answer": answer,
                     "data": [{"law_firm": r[0], "attorney": f"{r[1]} {r[2]}", "email": r[3], "cases": r[7]} for r in results[:5]],
                     "sql_used": sql,
                     "confidence": 0.90
                 }
-            
+
             # Original company-based search
             sql = f"""
-            SELECT 
+            SELECT
                 employer_name,
                 employer_poc_email,
                 employer_poc_phone,
@@ -790,19 +790,19 @@ Respond ONLY with the JSON object, no other text."""
             FROM RAW.H1B_RAW
             WHERE employer_name ILIKE '%{company}%'
               AND case_status = 'Certified'
-              AND (employer_poc_email IS NOT NULL 
+              AND (employer_poc_email IS NOT NULL
                    OR agent_attorney_email_address IS NOT NULL)
             ORDER BY received_date DESC
             LIMIT 5
             """
-            
+
             cursor.execute(sql)
             results = cursor.fetchall()
-            
+
             if not results:
                 # Try employer_intelligence
                 sql2 = f"""
-                SELECT 
+                SELECT
                     employer_original,
                     sponsorship_score,
                     approval_rate,
@@ -813,7 +813,7 @@ Respond ONLY with the JSON object, no other text."""
                 """
                 cursor.execute(sql2)
                 ei_results = cursor.fetchone()
-                
+
                 if ei_results:
                     return {
                         "answer": f"**{ei_results[0]}** sponsors H-1B visas:\n\n- Sponsorship Score: {ei_results[1]}/100\n- Approval Rate: {ei_results[2]*100:.0f}%\n- Total Filings: {ei_results[3]}\n\n⚠️ Contact information not available in public records. Reach out through company HR or careers page.",
@@ -822,11 +822,11 @@ Respond ONLY with the JSON object, no other text."""
                     }
                 else:
                     return self._error_response(f"No H-1B data found for {company}")
-            
+
             # Format answer
             data = results[0]
             answer = f"### 📞 Contact Information for {data[0]}\n\n"
-            
+
             # Employer contact section
             answer += "### 🏢 Employer Immigration Contact\n\n"
             if data[1]:  # POC email
@@ -836,7 +836,7 @@ Respond ONLY with the JSON object, no other text."""
                 answer += f"**📱 Phone:** {formatted_poc_phone}  \n"
             if data[3]:  # POC title
                 answer += f"**👤 Title:** {data[3]}  \n"
-            
+
             # Attorney section
             answer += "\n### 👔 Immigration Attorney Information\n\n"
             if data[4] and data[5]:  # Attorney name
@@ -848,46 +848,46 @@ Respond ONLY with the JSON object, no other text."""
                 answer += f"**📱 Phone:** {formatted_attorney_phone}  \n"
             if data[8]:  # Law firm
                 answer += f"**🏢 Law Firm:** {data[8]}  \n"
-            
+
             # H-1B activity
             answer += f"\n### 📊 H-1B Activity\n\n"
             answer += f"**Total Filings:** {data[9]} cases in database  \n"
-            
+
             # Next steps
             answer += "\n### ✅ Next Steps\n\n"
             answer += f"1. **Email** {data[1] or data[6] or 'company HR'} to inquire about H-1B sponsorship  \n"
             answer += "2. **Mention** you're on F-1 visa seeking sponsorship  \n"
             answer += "3. **Attach** your resume and highlight relevant experience  \n"
-            
+
             return {
                 "answer": answer,
-                "data": [dict(zip(['employer', 'poc_email', 'attorney_email', 'law_firm'], 
+                "data": [dict(zip(['employer', 'poc_email', 'attorney_email', 'law_firm'],
                                  [data[0], data[1], data[6], data[8]]))],
                 "sql_used": sql,
                 "confidence": 0.95
             }
-            
+
         except Exception as e:
             logger.error(f"Contact query error: {e}")
             return self._error_response(str(e))
         finally:
             cursor.close()
-    
+
     def _get_salary_info(self, job_title: str, location: str) -> Dict:
         """Get salary statistics from H-1B data."""
         if not job_title:
             return self._error_response("Please specify a job title (e.g., Software Engineer, Data Analyst)")
-        
+
         cursor = self.conn.cursor()
-        
+
         try:
             sql = f"""
-            SELECT 
+            SELECT
                 job_title,
                 worksite_city,
                 worksite_state,
                 COUNT(*) as sample_size,
-                ROUND(AVG(CASE 
+                ROUND(AVG(CASE
                     WHEN wage_unit_of_pay = 'Hour' THEN wage_rate_of_pay_from * 2080
                     WHEN wage_unit_of_pay = 'Year' THEN wage_rate_of_pay_from
                     ELSE wage_rate_of_pay_from
@@ -905,32 +905,32 @@ Respond ONLY with the JSON object, no other text."""
             ORDER BY sample_size DESC
             LIMIT 10
             """
-            
+
             cursor.execute(sql)
             results = cursor.fetchall()
-            
+
             if not results:
                 return self._error_response(f"No salary data found for {job_title}" + (f" in {location}" if location else ""))
-            
+
             # Format answer
             data = results[0]
             location_str = f"{data[1]}, {data[2]}" if data[1] else data[2] if data[2] else "United States"
-            
+
             # Format numbers properly to avoid markdown issues
             avg_salary = f"${int(data[4]):,}"
             min_salary = f"${int(data[5]):,}"
             max_salary = f"${int(data[6]):,}"
             prevailing_wage = f"${int(data[7]):,}"
-            
+
             answer = f"### 💼 Salary Data for {data[0]}\n\n"
             if location:
                 answer += f"**📍 Location:** {location_str}  \n"
             answer += f"**📊 Sample Size:** {data[3]} H-1B cases\n\n"
-            
+
             answer += f"**💰 Average Salary:** {avg_salary}  \n"
             answer += f"**📊 Salary Range:** {min_salary} - {max_salary}  \n"
             answer += f"**📈 Prevailing Wage:** {prevailing_wage}  \n"
-            
+
             # Negotiation advice
             answer += "\n### 💡 Negotiation Advice\n\n"
             if data[4] < data[7]:
@@ -941,9 +941,9 @@ Respond ONLY with the JSON object, no other text."""
                 competitive_low = f"${int(data[4]*0.9):,}"
                 competitive_high = f"${int(data[4]*1.1):,}"
                 answer += f"- **Competitive range:** {competitive_low} - {competitive_high}  \n"
-            
+
             answer += f"- **Minimum acceptable:** {prevailing_wage} (prevailing wage floor)  \n"
-            
+
             # Show other locations if available
             if len(results) > 1:
                 answer += f"\n### 📍 Other Locations\n\n"
@@ -951,30 +951,30 @@ Respond ONLY with the JSON object, no other text."""
                     loc = f"{row[1]}, {row[2]}" if row[1] else row[2]
                     loc_avg = f"${int(row[4]):,}"
                     answer += f"- **{loc}:** {loc_avg} avg ({row[3]} cases)  \n"
-            
+
             return {
                 "answer": answer,
                 "data": [{"job_title": data[0], "location": location_str, "avg_salary": data[4], "sample_size": data[3]}],
                 "sql_used": sql,
                 "confidence": 0.95
             }
-            
+
         except Exception as e:
             logger.error(f"Salary query error: {e}")
             return self._error_response(str(e))
         finally:
             cursor.close()
-    
+
     def _get_sponsorship_info(self, company: str) -> Dict:
         """Get H-1B sponsorship statistics."""
         if not company:
             return self._error_response("Please specify a company name.")
-        
+
         cursor = self.conn.cursor()
-        
+
         try:
             sql = f"""
-            SELECT 
+            SELECT
                 employer_original,
                 sponsorship_score,
                 approval_rate,
@@ -993,16 +993,16 @@ Respond ONLY with the JSON object, no other text."""
             ORDER BY sponsorship_score DESC
             LIMIT 5
             """
-            
+
             cursor.execute(sql)
             results = cursor.fetchall()
-            
+
             if not results:
                 return self._error_response(f"No H-1B data found for {company}")
-            
+
             data = results[0]
             answer = f"### 🏢 {data[0]} - H-1B Sponsorship Profile\n\n"
-            
+
             # Sponsorship score
             score = data[1]
             if score >= 90:
@@ -1013,10 +1013,10 @@ Respond ONLY with the JSON object, no other text."""
                 badge = "🟠 Fair"
             else:
                 badge = "🔴 Risky"
-            
+
             answer += f"### {badge} Sponsor\n\n"
             answer += f"**Overall Score:** {score:.1f}/100  \n\n"
-            
+
             # Statistics - Use REAL approval rate (index 10)
             real_approval_rate = data[10] if len(data) > 10 else (data[4] / data[3] * 100 if data[3] > 0 else 0)
             answer += f"### 📊 Statistics (FY2025 Q3)\n\n"
@@ -1025,17 +1025,17 @@ Respond ONLY with the JSON object, no other text."""
             answer += f"**✔️ Certified:** {data[4]:,}  \n"
             answer += f"**❌ Denied:** {data[5]:,}  \n"
             answer += f"**📈 Recent Activity:** {data[6]:,} filings in last 6 months  \n"
-            
+
             # Format salary properly
             avg_salary = f"${int(data[7]):,}"
             answer += f"**💰 Average Salary Offered:** {avg_salary}  \n"
-            
+
             # Risk assessment
             answer += f"\n### ⚠️ Risk Assessment\n\n"
             answer += f"**Risk Level:** {data[9]}  \n"
             if data[8]:  # is_violator
                 answer += "**⛔ WARNING:** Willful violator on record  \n"
-            
+
             # Recommendation
             answer += "\n### 💡 Recommendation\n\n"
             if score >= 80:
@@ -1046,33 +1046,33 @@ Respond ONLY with the JSON object, no other text."""
                 answer += "⚠️ **Proceed with caution** - Limited history  \n"
             else:
                 answer += "🚫 **Not recommended** - High risk  \n"
-            
+
             return {
                 "answer": answer,
                 "data": [{"employer": data[0], "score": data[1], "approval_rate": data[2]}],
                 "sql_used": sql,
                 "confidence": 0.95
             }
-            
+
         except Exception as e:
             logger.error(f"Sponsorship query error: {e}")
             return self._error_response(str(e))
         finally:
             cursor.close()
-    
+
     def _compare_companies(self, companies: List[str]) -> Dict:
         """Compare multiple companies for H-1B sponsorship."""
         if len(companies) < 2:
             return self._error_response("Please specify at least 2 companies to compare.")
-        
+
         cursor = self.conn.cursor()
-        
+
         try:
             # Build ILIKE conditions
             conditions = " OR ".join([f"employer_clean ILIKE '%{c.upper()}%'" for c in companies[:3]])
-            
+
             sql = f"""
-            SELECT 
+            SELECT
                 employer_original,
                 sponsorship_score,
                 approval_rate,
@@ -1087,16 +1087,16 @@ Respond ONLY with the JSON object, no other text."""
             WHERE {conditions}
             ORDER BY sponsorship_score DESC
             """
-            
+
             cursor.execute(sql)
             results = cursor.fetchall()
-            
+
             if not results:
                 return self._error_response(f"No data found for companies: {', '.join(companies)}")
-            
+
             # Format comparison
             answer = f"### 📊 H-1B Sponsorship Comparison\n\n"
-            
+
             for i, data in enumerate(results, 1):
                 # Add rank emoji
                 rank_emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉"
@@ -1106,14 +1106,14 @@ Respond ONLY with the JSON object, no other text."""
                 answer += f"**📈 Sponsorship Score:** {data[1]:.1f}/100  \n"
                 answer += f"**✅ Approval Rate:** {real_rate:.1f}%  \n"
                 answer += f"**📋 Total Filings:** {data[3]:,}  \n"
-                
+
                 # Format salary
                 avg_salary = f"${int(data[4]):,}"
                 answer += f"**💰 Average Salary:** {avg_salary}  \n"
                 answer += f"**⚠️ Risk Level:** {data[5]}  \n"
                 answer += f"**📈 Recent Activity:** {data[6]:,} filings in 6 months  \n\n"
                 answer += "---\n\n"
-            
+
             # Winner
             if len(results) >= 2:
                 winner = results[0]
@@ -1122,29 +1122,29 @@ Respond ONLY with the JSON object, no other text."""
                 approval_diff = (winner[2] - results[1][2]) * 100
                 answer += f"**Why?** Higher score (+{score_diff:.1f} points), "
                 answer += f"better approval rate (+{approval_diff:.1f}%)  \n"
-            
+
             return {
                 "answer": answer,
                 "data": [{"employer": r[0], "score": r[1]} for r in results],
                 "sql_used": sql,
                 "confidence": 0.95
             }
-            
+
         except Exception as e:
             logger.error(f"Comparison query error: {e}")
             return self._error_response(str(e))
         finally:
             cursor.close()
-    
+
     def _extract_companies_from_history(self, chat_history: List[Dict]) -> List[str]:
         """Extract company names from previous chat responses."""
         companies = []
         import re
-        
+
         # Look at last 3 messages for company mentions
         for msg in chat_history[-3:]:
             assistant_msg = msg.get('assistant', '')
-            
+
             # Pattern 1: Companies in bullet lists or numbered lists
             company_matches = re.findall(r'^[\d\-\*]+\s*(.+?)(?:,|\n|$)', assistant_msg, re.MULTILINE)
             for match in company_matches:
@@ -1152,11 +1152,11 @@ Respond ONLY with the JSON object, no other text."""
                 clean_name = match.strip().replace('**', '').replace('Inc.', '').replace('LLC', '').replace('d/b/a', '').strip()
                 if len(clean_name) > 3 and len(clean_name) < 80:  # Reasonable company name length
                     companies.append(clean_name)
-            
+
             # Pattern 2: "at COMPANY" or "by COMPANY"
             at_matches = re.findall(r'\bat\s+([A-Z][a-zA-Z\s&,\.]+?)(?:\s+in|\s+for|\n|\||$)', assistant_msg)
             companies.extend([c.strip() for c in at_matches if len(c.strip()) > 3])
-        
+
         # Remove duplicates while preserving order
         seen = set()
         unique_companies = []
@@ -1164,37 +1164,37 @@ Respond ONLY with the JSON object, no other text."""
             if c.lower() not in seen:
                 seen.add(c.lower())
                 unique_companies.append(c)
-        
+
         return unique_companies[:10]  # Return top 10
-    
+
     def _search_jobs(self, question: str, job_title: str, location: str, resume_skills: List[str] = None, resume_context: str = None, company_list: List[str] = None) -> Dict:
         """Search jobs using Agent 1."""
         try:
             import sys
             from pathlib import Path
-            
+
             # Add parent directory to path
             project_root = Path(__file__).parent.parent.parent
             sys.path.insert(0, str(project_root))
-            
+
             from snowflake.agents.agent1_search import JobSearchAgent
-            
+
             # Enhance question with resume skills and company list if provided
             enhanced_question = question
             filters = {}
-            
+
             if resume_skills:
                 logger.info(f"🎯 Matching jobs with resume skills: {', '.join(resume_skills[:5])}")
                 enhanced_question = f"{question} with skills: {', '.join(resume_skills[:5])}"
                 filters['resume_skills'] = resume_skills  # Pass to Agent 1 for scoring
-            
+
             if company_list:
                 logger.info(f"🏢 Filtering by companies from context: {', '.join(company_list[:5])}")
                 filters['companies'] = company_list
-            
+
             agent1 = JobSearchAgent()
             result = agent1.search(enhanced_question, filters=filters)
-            
+
             # Handle errors from Agent 1
             if result.get('status') == 'error':
                 logger.error(f"❌ Agent 1 search failed: {result.get('error', 'Unknown error')}")
@@ -1203,15 +1203,15 @@ Respond ONLY with the JSON object, no other text."""
                     "data": [],
                     "confidence": 0.0
                 }
-            
+
             # If no jobs found and resume provided, try progressively broader searches
             if result.get('status') == 'success' and not result.get('jobs', []) and resume_skills:
                 # Use location parameter already passed to this method
-                
+
                 # Step 1: Try broader job categories with same location
                 logger.info("🔍 No jobs found, using LLM to find related job categories...")
                 broader_titles = self._get_related_job_titles_from_resume(resume_context or '', resume_skills)
-                
+
                 if broader_titles:
                     logger.info(f"🎯 Trying broader job titles: {broader_titles}")
                     broader_query = f"{broader_titles} in {location}" if location else broader_titles
@@ -1220,7 +1220,7 @@ Respond ONLY with the JSON object, no other text."""
                         logger.error(f"❌ Broader search failed: {result.get('error')}")
                     else:
                         logger.info(f"📊 Broader job titles found {len(result.get('jobs', []))} jobs")
-                
+
                 # Step 2: If still no results and location was specified, try nationwide
                 if result.get('status') == 'success' and not result.get('jobs', []) and location:
                     logger.info(f"🌎 Still no jobs in {location}, expanding search nationwide...")
@@ -1230,14 +1230,14 @@ Respond ONLY with the JSON object, no other text."""
                         logger.error(f"❌ Nationwide search failed: {result.get('error')}")
                     else:
                         logger.info(f"📊 Nationwide search found {len(result.get('jobs', []))} jobs")
-                    
+
                     if result.get('status') == 'success' and result.get('jobs'):
                         # Add note that we expanded the search
                         result['expanded_search'] = True
                         result['original_location'] = location
-            
+
             agent1.close()
-            
+
             if result.get('status') == 'success' and result.get('jobs', []):
                 # Filter out low-relevance jobs when resume is provided
                 jobs = result['jobs']
@@ -1249,18 +1249,18 @@ Respond ONLY with the JSON object, no other text."""
                         if match_score >= 30:  # Minimum 30% relevance
                             job['MATCH_SCORE'] = match_score
                             filtered_jobs.append(job)
-                    
+
                     if filtered_jobs:
                         jobs = filtered_jobs
                         logger.info(f"✅ Filtered to {len(jobs)} relevant jobs (removed {len(result['jobs']) - len(jobs)} low-relevance matches)")
                     else:
                         logger.warning(f"⚠️ All jobs filtered out (low relevance), showing top 10 anyway")
                         jobs = result['jobs'][:10]
-                
+
                 # Return up to 10 jobs
                 jobs = jobs[:10]
                 total_available = result.get('total', len(jobs))
-                
+
                 # Add header with expansion note if search was broadened
                 if result.get('expanded_search'):
                     original_loc = result.get('original_location', 'your location')
@@ -1268,15 +1268,15 @@ Respond ONLY with the JSON object, no other text."""
                     answer += "_💡 Tip: Specific locations may have limited openings. Consider remote roles or relocation._\n\n"
                 else:
                     answer = f"### 🎯 Found {total_available} jobs (showing {len(jobs)})\n\n"
-                
+
                 for i, job in enumerate(jobs, 1):
                     # Title with bold formatting
                     answer += f"### {i}. {job['TITLE']}\n\n"
-                    
+
                     # Company and Location on one line
                     answer += f"**🏢 Company:** {job['COMPANY']}  \n"
                     answer += f"**📍 Location:** {job['LOCATION']}  \n"
-                    
+
                     # Match score (calculated from relevance_score: normalize to 0-100%)
                     if job.get('RELEVANCE_SCORE') is not None:
                         # Normalize relevance score to percentage (typical range: 0-50, max could be higher)
@@ -1284,19 +1284,19 @@ Respond ONLY with the JSON object, no other text."""
                         raw_score = float(job['RELEVANCE_SCORE'])
                         match_percentage = min(100, (raw_score / 50) * 100)
                         answer += f"**🎯 Match:** {match_percentage:.0f}%  \n"
-                    
+
                     # Visa category with color coding
                     visa = job['VISA_CATEGORY']
                     answer += f"**🎫 Visa Status:** {visa}  \n"
-                    
+
                     # Salary if available
                     if job.get('SALARY_MIN') and job.get('SALARY_MAX'):
                         answer += f"**💰 Salary Range:** ${job['SALARY_MIN']:,} - ${job['SALARY_MAX']:,}  \n"
-                    
+
                     # Work model if available
                     if job.get('WORK_MODEL'):
                         answer += f"**💼 Work Model:** {job['WORK_MODEL']}  \n"
-                    
+
                     # H-1B sponsorship info
                     if job.get('H1B_SPONSOR'):
                         # Try both field names for backward compatibility
@@ -1306,7 +1306,7 @@ Respond ONLY with the JSON object, no other text."""
                             answer += f"**✅ H-1B Sponsor:** Yes ({approval_rate:.0f}% approval rate)  \n"
                         else:
                             answer += f"**✅ H-1B Sponsor:** Yes  \n"
-                    
+
                     # Days since posted
                     if job.get('DAYS_SINCE_POSTED') is not None:
                         days = job['DAYS_SINCE_POSTED']
@@ -1316,7 +1316,7 @@ Respond ONLY with the JSON object, no other text."""
                             answer += f"**📅 Posted:** Yesterday  \n"
                         elif days <= 7:
                             answer += f"**📅 Posted:** {days} days ago  \n"
-                    
+
                     # Job description snippet
                     if job.get('DESCRIPTION'):
                         desc = str(job['DESCRIPTION']).strip()
@@ -1325,7 +1325,7 @@ Respond ONLY with the JSON object, no other text."""
                         else:
                             desc_snippet = desc
                         answer += f"\n**📝 Description:**  \n{desc_snippet}\n"
-                    
+
                     # Apply link as button-style with fallback
                     job_url = job.get('URL', '').strip()
                     if job_url and job_url.startswith('http'):
@@ -1336,10 +1336,10 @@ Respond ONLY with the JSON object, no other text."""
                         title = job['TITLE'].replace(' ', '+')
                         search_url = f"https://www.google.com/search?q={company}+{title}+jobs"
                         answer += f"\n**[🔗 Search Job]({search_url})**\n\n"
-                    
+
                     # Divider between jobs
                     answer += "---\n\n"
-                
+
                 return {
                     "answer": answer,
                     "jobs": jobs,  # Changed from 'data' to 'jobs' for consistency
@@ -1356,23 +1356,23 @@ Respond ONLY with the JSON object, no other text."""
                     suggestions.append(f"Try broader job categories (not just '{job_title}')")
                 if not resume_context:
                     suggestions.append("Upload your resume for personalized matches")
-                
+
                 suggestion_text = "\n".join([f"- {s}" for s in suggestions]) if suggestions else "- Try different search terms\n- Upload your resume for better matches\n- Search for broader job categories"
-                
+
                 return {
                     "answer": f"### ❌ No jobs found\n\n**Suggestions:**\n{suggestion_text}",
                     "data": [],
                     "confidence": 0.2
                 }
-                
+
         except Exception as e:
             logger.error(f"Job search error: {e}")
             return self._error_response(str(e))
-    
+
     def _get_related_job_titles_from_resume(self, resume_text: str, resume_skills: List[str]) -> str:
         """Use LLM to analyze resume and suggest broader job categories for searching."""
         cursor = self.conn.cursor()
-        
+
         try:
             skills_str = ', '.join(resume_skills[:10])
             prompt = f"""You are a career advisor analyzing a resume to suggest relevant job search terms.
@@ -1380,7 +1380,7 @@ Respond ONLY with the JSON object, no other text."""
 **Resume Skills:** {skills_str}
 **Resume Context:** {resume_text[:500]}
 
-Based on these skills and experience, suggest 3-5 BROAD job categories that would match this candidate's profile. 
+Based on these skills and experience, suggest 3-5 BROAD job categories that would match this candidate's profile.
 Use general terms that appear in job titles, not specific niche roles.
 
 Examples:
@@ -1396,64 +1396,64 @@ Return ONLY the job title search terms connected with OR, no explanations."""
                 '{prompt.replace("'", "''")}'
             ) as suggested_titles
             """
-            
+
             cursor.execute(sql)
             result = cursor.fetchone()
-            
+
             if result and result[0]:
                 suggested = result[0].strip()
                 logger.info(f"✅ LLM suggested job categories: {suggested}")
                 return suggested
-            
+
         except Exception as e:
             logger.error(f"❌ LLM job category suggestion failed: {e}")
         finally:
             cursor.close()
-        
+
         return None
-    
+
     def _calculate_resume_match(self, job: Dict, resume_skills: List[str]) -> int:
         """Calculate % match between resume skills and job requirements."""
         if not resume_skills:
             return 100  # No resume = show all jobs
-        
+
         job_text = f"{job.get('TITLE', '')} {job.get('DESCRIPTION', '')} {job.get('QUALIFICATIONS', '')}".lower()
-        
+
         # Count how many resume skills appear in job
         matched_skills = 0
         for skill in resume_skills:
             if skill.lower() in job_text:
                 matched_skills += 1
-        
+
         # Calculate percentage
         match_percent = int((matched_skills / len(resume_skills)) * 100) if resume_skills else 0
         return match_percent
-    
+
     def _extract_company(self, text: str) -> str:
         """Extract company name."""
         companies = ['amazon', 'google', 'microsoft', 'meta', 'apple', 'snowflake',
                     'netflix', 'uber', 'airbnb', 'stripe', 'salesforce', 'oracle',
                     'ibm', 'intel', 'nvidia', 'adobe', 'cisco', 'dell', 'hp']
-        
+
         t = text.lower()
         for comp in companies:
             if comp in t:
                 return comp
-        
+
         # Pattern: "at/for COMPANY"
         match = re.search(r'\b(?:at|for|with)\s+([A-Z][a-zA-Z\s&]+?)(?:\s|$|\?)', text)
         if match:
             return match.group(1).strip()
-        
+
         return None
-    
+
     def _extract_job_title(self, text: str) -> str:
         """Extract job title."""
         titles = ['software engineer', 'data engineer', 'data analyst', 'data scientist',
                  'machine learning', 'product manager', 'devops', 'frontend', 'backend',
                  'full stack', 'cloud engineer', 'security engineer', 'data', 'sde',
                  'internship', 'intern', 'software developer', 'developer']
-        
+
         t = text.lower()
         for title in titles:
             if title in t:
@@ -1466,28 +1466,28 @@ Return ONLY the job title search terms connected with OR, no explanations."""
                     return 'intern'
                 return title
         return None
-    
+
     def _extract_location(self, text: str) -> str:
         """Extract location."""
         locations = ['boston', 'new york', 'nyc', 'san francisco', 'seattle', 'austin',
                     'chicago', 'denver', 'los angeles', 'la', 'bay area', 'remote']
-        
+
         t = text.lower()
         for loc in locations:
             if loc in t:
                 return loc
         return None
-    
+
     def _extract_multiple_companies(self, text: str) -> List[str]:
         """Extract multiple companies for comparison using pattern matching."""
         companies = []
-        
+
         # Common patterns: "X and Y", "X vs Y", "X or Y", "X, Y", "compare X and Y"
         patterns = [
             r'\b([A-Z][a-zA-Z0-9\s&]+?)\s+(?:and|vs\.?|versus|or|,)\s+([A-Z][a-zA-Z0-9\s&]+?)\b',
             r'compare\s+([A-Z][a-zA-Z0-9\s&]+?)\s+(?:and|with|to)\s+([A-Z][a-zA-Z0-9\s&]+?)\b',
         ]
-        
+
         for pattern in patterns:
             matches = re.finditer(pattern, text, re.IGNORECASE)
             for match in matches:
@@ -1498,7 +1498,7 @@ Return ONLY the job title search terms connected with OR, no explanations."""
                     companies.append(comp1)
                 if comp2.lower() not in ['the', 'a', 'an', 'for', 'with', 'at']:
                     companies.append(comp2)
-        
+
         # Fallback: check hardcoded list for backward compatibility
         if not companies:
             common = ['amazon', 'google', 'microsoft', 'meta', 'apple', 'snowflake',
@@ -1507,14 +1507,14 @@ Return ONLY the job title search terms connected with OR, no explanations."""
             for comp in common:
                 if comp in t:
                     companies.append(comp.title())
-        
+
         return list(set(companies))  # Remove duplicates
-    
+
     def _analyze_resume(self, question: str, resume_context: str = None) -> Dict:
         """Analyze resume and provide insights."""
         if not resume_context:
             return self._error_response("Please upload your resume first to get analysis.")
-        
+
         try:
             # Use LLM to analyze resume
             prompt = f"""You are a professional career advisor. Analyze this resume and provide helpful insights.
@@ -1536,33 +1536,33 @@ Be specific and actionable."""
                 '{prompt.replace("'", "''")}'
             ) as analysis
             """
-            
+
             cursor = self.conn.cursor()
             cursor.execute(sql)
             result = cursor.fetchone()
             cursor.close()
-            
+
             analysis = result[0] if result else "Unable to analyze resume."
-            
+
             return {
                 "answer": analysis,
                 "data": [],
                 "confidence": 0.9
             }
-            
+
         except Exception as e:
             logger.error(f"Resume analysis error: {e}")
             return self._error_response(str(e))
-    
+
     def _give_career_advice(self, question: str, resume_context: str = None, resume_skills: List[str] = None) -> Dict:
         """Provide personalized career advice based on resume."""
         if not resume_context and not resume_skills:
             return self._error_response("Please upload your resume first to get personalized career advice.")
-        
+
         try:
             skills_text = f"Skills: {', '.join(resume_skills[:10])}" if resume_skills else ""
             resume_text = resume_context[:1000] if resume_context else ""
-            
+
             prompt = f"""You are an experienced career counselor specializing in tech careers. Provide personalized career advice.
 
 User Question: {question}
@@ -1586,38 +1586,38 @@ Be encouraging and specific."""
                 '{prompt.replace("'", "''")}'
             ) as advice
             """
-            
+
             cursor = self.conn.cursor()
             cursor.execute(sql)
             result = cursor.fetchone()
             cursor.close()
-            
+
             advice = result[0] if result else "Unable to provide career advice."
-            
+
             return {
                 "answer": advice,
                 "data": [],
                 "confidence": 0.85
             }
-            
+
         except Exception as e:
             logger.error(f"Career advice error: {e}")
             return self._error_response(str(e))
-    
+
     def _llm_generate_and_execute_sql(self, question: str, intent_analysis: Dict, resume_context: str = None, chat_history: list = None) -> Dict:
         """
         🤖 INTELLIGENT SQL GENERATION - No hardcoded logic!
-        
+
         LLM generates SQL query based on:
         1. User's question
         2. Full database schema (H1B_RAW: 97 fields, JOBS_PROCESSED: 22 fields)
         3. Intent analysis
         4. Resume context and chat history
-        
+
         This handles ANY query about our data!
         """
         cursor = self.conn.cursor()
-        
+
         try:
             # Build context sections
             history_section = ""
@@ -1625,11 +1625,11 @@ Be encouraging and specific."""
                 history_section = "\n**Previous Conversation:**\n"
                 for msg in chat_history[-2:]:
                     history_section += f"User: {msg.get('user', '')}\nAssistant: {msg.get('assistant', '')[:150]}...\n\n"
-            
+
             resume_section = ""
             if resume_context:
                 resume_section = f"\n**User's Resume Skills:** {resume_context[:500]}"
-            
+
             # LLM generates SQL + formats answer
             prompt = f"""You are an expert SQL analyst with access to H-1B visa and job posting data. Generate a SQL query to answer the user's question.
 
@@ -1643,31 +1643,31 @@ Be encouraging and specific."""
 **AVAILABLE DATABASE SCHEMA:**
 
 1. **RAW.H1B_RAW** (479,005 rows) - Complete H-1B visa data with 97 columns:
-   
+
    **CASE INFO (4 cols):** case_number, case_status (Certified/Denied/Withdrawn), received_date (DATE), decision_date (DATE)
-   
+
    **EMPLOYER (27 cols):** employer_name, employer_city, employer_state (2-letter: CA/NY/TX), employer_postal_code, employer_phone, employer_phone_ext, employer_fein, employer_poc_first_name, employer_poc_last_name, employer_poc_email, employer_poc_phone, employer_poc_job_title, employer_address1, employer_address2, employer_country, change_employer, agent_representing_employer
-   
+
    **JOB (5 cols):** job_title, soc_code, soc_title, full_time_position (Y/N), total_worker_positions
-   
+
    **WORKSITE (8 cols):** worksite_city, worksite_state (2-letter: CA/NY/TX), worksite_county, worksite_postal_code, worksite_address1, worksite_address2, worksite_workers, total_worksite_locations
-   
+
    **WAGE (6 cols):** wage_rate_of_pay_from (DECIMAL), wage_rate_of_pay_to (DECIMAL), wage_unit_of_pay (Year/Hour/Week), prevailing_wage (DECIMAL), pw_unit_of_pay, pw_wage_level
-   
+
    **ATTORNEY/AGENT (14 cols):** agent_attorney_first_name, agent_attorney_last_name, agent_attorney_middle_name, agent_attorney_email_address, agent_attorney_phone, agent_attorney_phone_ext, agent_attorney_city, agent_attorney_state (2-letter: CA/NY/TX), agent_attorney_postal_code, agent_attorney_address1, agent_attorney_address2, agent_attorney_country, lawfirm_name_business_name
-   
+
    **OTHER (33 cols):** visa_class, begin_date, end_date, new_employment, continued_employment, change_previous_employment, new_concurrent_employment, amended_petition, trade_name_dba, naics_code, h_1b_dependent, willful_violator, support_h1b, statutory_basis, original_cert_date, preparer_first_name, preparer_last_name, preparer_email, preparer_business_name, pw_tracking_number, pw_oes_year, state_of_highest_court, name_of_highest_state_court, secondary_entity, secondary_entity_business_name, pw_other_source, pw_other_year, pw_survey_publisher, pw_survey_name, agree_to_lc_statement, appendix_a_attached, public_disclosure, loaded_at
 
 2. **PROCESSED.JOBS_PROCESSED** (37,891 rows) - Enhanced job postings with 38 columns:
-   
+
    **BASIC (10 cols):** job_id, url, title, company, company_clean, location, description, description_embedding, source, company_size
-   
+
    **EMPLOYMENT (7 cols):** job_type, salary_min, salary_max, salary_text, work_model (Remote/Hybrid/On-site), department, qualifications
-   
+
    **H1B/VISA (13 cols):** h1b_sponsor (BOOLEAN), h1b_employer_name, h1b_city, h1b_state, visa_category, h1b_sponsored_explicit, h1b_approval_rate, h1b_total_petitions, total_petitions, avg_approval_rate, sponsorship_score, h1b_risk_level, h1b_avg_wage
-   
+
    **CLASSIFICATION (4 cols):** snippet, classification_confidence, is_new_grad_role (BOOLEAN), job_category
-   
+
    **DATES (2 cols):** posted_date (DATE), days_since_posted
 
 3. **PROCESSED.EMPLOYER_INTELLIGENCE** - Company H-1B profiles:
@@ -1717,24 +1717,24 @@ Generate the response now:"""
                 '{prompt.replace("'", "''")}'
             ) as sql_response
             """
-            
+
             cursor.execute(sql_gen)
             result = cursor.fetchone()
-            
+
             if not result or not result[0]:
                 return self._error_response("Failed to generate SQL query")
-            
+
             # Parse LLM response
             response_text = result[0].strip()
             logger.info(f"🤖 LLM SQL Generation: {response_text[:500]}")
-            
+
             # Extract JSON
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if not json_match:
                 return self._error_response("Failed to parse SQL generation response")
-            
+
             sql_response = json.loads(json_match.group())
-            
+
             # Check if question can be answered
             if not sql_response.get('can_answer', True):
                 explanation = sql_response.get('explanation', 'Question cannot be answered with available data')
@@ -1743,17 +1743,17 @@ Generate the response now:"""
                     "data": [],
                     "confidence": 0.5
                 }
-            
+
             generated_sql = sql_response.get('sql', '')
             explanation = sql_response.get('explanation', '')
-            
+
             if not generated_sql:
                 return self._error_response("No SQL query generated")
-            
+
             # 🛡️ SECURITY GUARDRAIL: Block destructive SQL commands
             sql_upper = generated_sql.upper().strip()
             destructive_commands = ['DELETE', 'DROP', 'TRUNCATE', 'ALTER', 'CREATE', 'INSERT', 'UPDATE', 'GRANT', 'REVOKE']
-            
+
             for cmd in destructive_commands:
                 if sql_upper.startswith(cmd) or f' {cmd} ' in sql_upper or f';{cmd}' in sql_upper:
                     logger.error(f"🚨 SECURITY: Blocked destructive SQL command: {cmd}")
@@ -1763,14 +1763,14 @@ Generate the response now:"""
                         "confidence": 0.0,
                         "security_blocked": True
                     }
-            
+
             logger.info(f"📊 Executing generated SQL: {generated_sql[:300]}")
-            
+
             # Execute the generated SQL
             cursor.execute(generated_sql)
             query_results = cursor.fetchall()
             column_names = [desc[0] for desc in cursor.description] if cursor.description else []
-            
+
             if not query_results:
                 return {
                     "answer": f"### 🔍 No Results Found\n\n{explanation}\n\nTry:\n- Different keywords\n- Broader location\n- Alternative company names",
@@ -1778,7 +1778,7 @@ Generate the response now:"""
                     "sql_used": generated_sql,
                     "confidence": 0.6
                 }
-            
+
             # Format results with LLM
             data_sample = query_results[:5]  # First 5 rows for formatting
             format_prompt = f"""Format these query results into a clear, professional answer for the user.
@@ -1807,27 +1807,27 @@ Use Markdown formatting. Be professional and helpful."""
                 '{format_prompt.replace("'", "''")}'
             ) as formatted_answer
             """
-            
+
             cursor.execute(format_sql)
             format_result = cursor.fetchone()
-            
+
             formatted_answer = format_result[0] if format_result else explanation
-            
+
             # Convert results to dict format
             data_dicts = [dict(zip(column_names, row)) for row in query_results[:10]]
-            
+
             return {
                 "answer": formatted_answer,
                 "data": data_dicts,
                 "sql_used": generated_sql,
                 "confidence": 0.85
             }
-            
+
         except Exception as e:
             logger.error(f"❌ LLM SQL generation error: {e}")
             import traceback
             traceback.print_exc()
-            
+
             # Guardrail 6: Better error messages for SQL failures
             error_str = str(e)
             if "invalid identifier" in error_str.lower():
@@ -1851,7 +1851,7 @@ Use Markdown formatting. Be professional and helpful."""
                 }
         finally:
             cursor.close()
-    
+
     def _error_response(self, message: str) -> Dict:
         """Standard error response with helpful formatting."""
         # Make error messages more user-friendly
@@ -1873,7 +1873,7 @@ Use Markdown formatting. Be professional and helpful."""
                 "data": [],
                 "confidence": 0.0
             }
-    
+
     def close(self):
         if self.conn:
             self.conn.close()

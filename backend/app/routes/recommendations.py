@@ -41,13 +41,13 @@ async def smart_job_search(
 ):
     """
     Intelligent job search using LLM to understand intent and match jobs.
-    
+
     **Examples:**
     - "entry level python jobs in San Francisco"
     - "remote senior software engineer with AWS experience"
     - "data scientist roles at startups with H-1B sponsorship"
     - "machine learning internships for students"
-    
+
     **Returns:**
     - Ranked job recommendations with match scores
     - AI-generated reasons for each match
@@ -57,13 +57,13 @@ async def smart_job_search(
     try:
         agent = AgentManager.get_search_agent()
         cursor = agent.conn.cursor()
-        
+
         cursor.execute("USE DATABASE job_intelligence")
         cursor.execute("USE SCHEMA processed")
-        
+
         # Step 1: Use LLM to analyze search intent
         query_escaped = query.replace("'", "''")
-        
+
         intent_prompt = f"""Analyze this job search query and extract structured search criteria:
 
 QUERY: "{query}"
@@ -93,29 +93,29 @@ Respond with JSON:
 Be liberal with job title synonyms. For "software engineer" include "SWE", "Developer", "Programmer"."""
 
         prompt_escaped = intent_prompt.replace("'", "''")
-        
+
         sql = f"""
             SELECT SNOWFLAKE.CORTEX.COMPLETE(
                 'mistral-large2',
                 '{prompt_escaped}'
             )
         """
-        
+
         cursor.execute(sql)
         intent_response = cursor.fetchone()[0]
-        
+
         # Parse LLM analysis
         json_match = re.search(r'\{.*?\}', intent_response, re.DOTALL)
         if not json_match:
             raise HTTPException(status_code=400, detail="Could not parse search query")
-        
+
         intent_data = json.loads(json_match.group(0))
-        
+
         logger.info(f"🧠 LLM parsed query: {intent_data}")
-        
+
         # Step 2: Build SQL query based on intent
         where_clauses = []
-        
+
         # Job titles (flexible matching)
         if intent_data.get('job_titles'):
             title_conditions = []
@@ -124,7 +124,7 @@ Be liberal with job title synonyms. For "software engineer" include "SWE", "Deve
                 title_conditions.append(f"LOWER(title) LIKE LOWER('%{title_clean}%')")
             if title_conditions:
                 where_clauses.append(f"({' OR '.join(title_conditions)})")
-        
+
         # Skills
         if intent_data.get('skills'):
             skill_conditions = []
@@ -133,7 +133,7 @@ Be liberal with job title synonyms. For "software engineer" include "SWE", "Deve
                 skill_conditions.append(f"LOWER(description) LIKE LOWER('%{skill_clean}%')")
             if skill_conditions:
                 where_clauses.append(f"({' OR '.join(skill_conditions)})")
-        
+
         # Experience level
         experience_map = {
             'entry': ["entry", "junior", "new grad", "0-2 years"],
@@ -141,7 +141,7 @@ Be liberal with job title synonyms. For "software engineer" include "SWE", "Deve
             'senior': ["senior", "lead", "principal", "staff", "5+ years"],
             'intern': ["intern", "internship", "co-op", "student"]
         }
-        
+
         exp_level = intent_data.get('experience_level', '').lower()
         if exp_level in experience_map:
             exp_conditions = []
@@ -149,7 +149,7 @@ Be liberal with job title synonyms. For "software engineer" include "SWE", "Deve
                 exp_conditions.append(f"LOWER(title) LIKE LOWER('%{term}%')")
             if exp_conditions:
                 where_clauses.append(f"({' OR '.join(exp_conditions)})")
-        
+
         # Location
         if intent_data.get('locations'):
             loc_conditions = []
@@ -161,21 +161,21 @@ Be liberal with job title synonyms. For "software engineer" include "SWE", "Deve
                     loc_conditions.append(f"LOWER(location) LIKE LOWER('%{loc_clean}%')")
             if loc_conditions:
                 where_clauses.append(f"({' OR '.join(loc_conditions)})")
-        
+
         # Work model
         if intent_data.get('work_model'):
             model = intent_data['work_model'].capitalize()
             where_clauses.append(f"work_model = '{model}'")
-        
+
         # Visa sponsorship
         if intent_data.get('visa_required'):
             where_clauses.append("h1b_sponsor = TRUE")
-        
+
         # Build final query
         where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
-        
+
         query_sql = f"""
-            SELECT 
+            SELECT
                 job_id,
                 title,
                 company,
@@ -205,29 +205,29 @@ Be liberal with job title synonyms. For "software engineer" include "SWE", "Deve
             ORDER BY posted_date DESC
             LIMIT {limit * 2}
         """
-        
+
         logger.info(f"📊 Executing search: {query_sql[:200]}...")
         cursor.execute(query_sql)
-        
+
         jobs = []
         columns = [col[0].lower() for col in cursor.description]
         for row in cursor.fetchall():
             job = dict(zip(columns, row))
             jobs.append(job)
-        
+
         if len(jobs) == 0:
             return RecommendationsResponse(
                 recommendations=[],
                 total=0,
                 analysis=f"No jobs found matching '{query}'. Try broadening your search criteria."
             )
-        
+
         # Step 3: Use LLM to rank and explain matches
         jobs_summary = "\n".join([
             f"{i+1}. {job['title']} at {job['company']} - {job['location']}"
             for i, job in enumerate(jobs[:20])
         ])
-        
+
         ranking_prompt = f"""You are a job matching expert. Rank these jobs for this query: "{query}"
 
 JOBS FOUND:
@@ -253,22 +253,22 @@ Respond with JSON array:
 Only include jobs with score >= 60. Sort by match_score descending."""
 
         ranking_escaped = ranking_prompt.replace("'", "''")
-        
+
         ranking_sql = f"""
             SELECT SNOWFLAKE.CORTEX.COMPLETE(
                 'mistral-large2',
                 '{ranking_escaped}'
             )
         """
-        
+
         cursor.execute(ranking_sql)
         ranking_response = cursor.fetchone()[0]
-        
+
         # Parse rankings
         json_match = re.search(r'\[.*?\]', ranking_response, re.DOTALL)
         if json_match:
             rankings = json.loads(json_match.group(0))
-            
+
             # Build recommendations
             recommendations = []
             for rank in rankings[:limit]:
@@ -284,17 +284,17 @@ Only include jobs with score >= 60. Sort by match_score descending."""
                         reasons=rank.get('reasons', []),
                         url=job.get('url')
                     ))
-            
+
             analysis = f"Found {len(jobs)} jobs matching your query. Showing top {len(recommendations)} recommendations based on AI analysis."
-            
+
             logger.info(f"✨ Smart search completed: {len(recommendations)} recommendations")
-            
+
             return RecommendationsResponse(
                 recommendations=recommendations,
                 total=len(jobs),
                 analysis=analysis
             )
-        
+
         # Fallback: Return top jobs without ranking
         recommendations = [
             JobRecommendation(
@@ -308,13 +308,13 @@ Only include jobs with score >= 60. Sort by match_score descending."""
             )
             for job in jobs[:limit]
         ]
-        
+
         return RecommendationsResponse(
             recommendations=recommendations,
             total=len(jobs),
             analysis=f"Found {len(jobs)} jobs. Showing top {len(recommendations)}."
         )
-        
+
     except json.JSONDecodeError as je:
         logger.error(f"JSON parse error: {je}")
         raise HTTPException(status_code=500, detail="Failed to parse AI response")
@@ -333,7 +333,7 @@ async def find_similar_jobs(
 ):
     """
     Find jobs similar to a given job using LLM analysis.
-    
+
     **Returns:**
     - Similar jobs ranked by relevance
     - AI explanation of similarity
@@ -342,10 +342,10 @@ async def find_similar_jobs(
     try:
         agent = AgentManager.get_search_agent()
         cursor = agent.conn.cursor()
-        
+
         cursor.execute("USE DATABASE job_intelligence")
         cursor.execute("USE SCHEMA processed")
-        
+
         # Get source job
         job_id_clean = job_id.replace("'", "''")
         cursor.execute(f"""
@@ -353,11 +353,11 @@ async def find_similar_jobs(
             FROM jobs_processed
             WHERE job_id = '{job_id_clean}'
         """)
-        
+
         result = cursor.fetchone()
         if not result:
             raise HTTPException(status_code=404, detail="Job not found")
-        
+
         source_job = {
             'title': result[0],
             'company': result[1],
@@ -365,7 +365,7 @@ async def find_similar_jobs(
             'description': result[3],
             'snippet': result[4]
         }
-        
+
         # Use LLM to analyze job and find similar characteristics
         analysis_prompt = f"""Analyze this job and identify key characteristics to find similar jobs:
 
@@ -390,35 +390,35 @@ Respond with JSON:
 }}"""
 
         prompt_escaped = analysis_prompt.replace("'", "''")
-        
+
         sql = f"""
             SELECT SNOWFLAKE.CORTEX.COMPLETE(
                 'mistral-large2',
                 '{prompt_escaped}'
             )
         """
-        
+
         cursor.execute(sql)
         analysis_response = cursor.fetchone()[0]
-        
+
         # Parse and search for similar jobs
         json_match = re.search(r'\{.*?\}', analysis_response, re.DOTALL)
         if json_match:
             characteristics = json.loads(json_match.group(0))
-            
+
             # Build search for similar jobs
             search_conditions = []
             if characteristics.get('role'):
                 role = characteristics['role'].replace("'", "''")
                 search_conditions.append(f"LOWER(title) LIKE LOWER('%{role}%')")
-            
+
             if characteristics.get('skills'):
                 for skill in characteristics['skills'][:3]:
                     skill_clean = skill.replace("'", "''")
                     search_conditions.append(f"LOWER(description) LIKE LOWER('%{skill_clean}%')")
-            
+
             where_sql = "WHERE " + " OR ".join(search_conditions) if search_conditions else ""
-            
+
             cursor.execute(f"""
                 SELECT job_id, title, company, location, url, snippet,
                        h1b_sponsor, h1b_approval_rate, h1b_total_petitions,
@@ -429,7 +429,7 @@ Respond with JSON:
                 ORDER BY posted_date DESC
                 LIMIT {limit}
             """)
-            
+
             similar_jobs = [
                 {
                     'job_id': row[0],
@@ -448,15 +448,15 @@ Respond with JSON:
                 }
                 for row in cursor.fetchall()
             ]
-            
+
             return {
                 'source_job': source_job,
                 'similar_jobs': similar_jobs,
                 'analysis': f"Found {len(similar_jobs)} similar jobs based on role: {characteristics.get('role', 'similar position')}"
             }
-        
+
         raise HTTPException(status_code=500, detail="Could not analyze job")
-        
+
     except Exception as e:
         logger.error(f"Similar jobs error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

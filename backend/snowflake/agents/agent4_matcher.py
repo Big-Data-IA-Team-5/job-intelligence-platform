@@ -153,14 +153,14 @@ Re-rank these 20 jobs and select the TOP 10 BEST MATCHES using advanced scoring 
 class ResumeMatcherAgent:
     """
     Agent 4: Resume-to-Job Matching
-    
+
     Process:
     1. Extract profile from resume → Mixtral 8x7B
     2. Vector search for similar jobs → Cortex Search
-    3. Re-rank top 20 → Mixtral 8x7B  
+    3. Re-rank top 20 → Mixtral 8x7B
     4. Return top 10 with scores
     """
-    
+
     def __init__(self):
         """Initialize Snowflake connection."""
         self.conn = snowflake.connector.connect(
@@ -172,31 +172,31 @@ class ResumeMatcherAgent:
             warehouse='compute_wh'
         )
         logger.info("✅ Agent 4 initialized")
-    
+
     def extract_profile(self, resume_text: str) -> Dict:
         """
         Step 1: Extract structured profile from resume.
-        
+
         Args:
             resume_text: Full resume text
-            
+
         Returns:
             Structured profile dict
         """
         cursor = self.conn.cursor()
-        
+
         try:
             # Truncate if too long
             resume_text = resume_text[:3000]
-            
+
             # Build prompt
             prompt = PROFILE_EXTRACTION_PROMPT.format(
                 resume_text=resume_text
             )
-            
+
             # Escape for SQL
             prompt_escaped = prompt.replace("'", "''")
-            
+
             # Call Mixtral
             sql = f"""
                 SELECT SNOWFLAKE.CORTEX.COMPLETE(
@@ -204,55 +204,55 @@ class ResumeMatcherAgent:
                     '{prompt_escaped}'
                 )
             """
-            
+
             cursor.execute(sql)
             response = cursor.fetchone()[0]
-            
+
             logger.info(f"🤖 LLM Response (first 500 chars): {response[:500]}")
-            
+
             # Parse JSON
             profile = self._parse_profile_response(response)
-            
+
             # Validate profile has required fields
             if not profile or not profile.get('technical_skills'):
                 logger.warning(f"⚠️ Empty profile returned, using defaults")
                 profile = self._default_profile()
-            
+
             logger.info(f"✅ Profile extracted: {len(profile.get('technical_skills', []))} skills, {profile.get('total_experience_years', 0)} years exp")
-            
+
             return profile
-            
+
         except Exception as e:
             logger.error(f"❌ Profile extraction failed: {e}")
             return self._default_profile()
         finally:
             cursor.close()
-    
+
     def _parse_profile_response(self, response: str) -> Dict:
         """Parse profile extraction response."""
-        
+
         try:
             if not response or len(response) < 10:
                 logger.warning(f"Empty or too short response: {response}")
                 return self._default_profile()
-            
+
             # Clean response
             response = re.sub(r'```json\n?', '', response)
             response = re.sub(r'```\n?', '', response)
             response = response.strip()
-            
+
             # Find JSON
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 json_str = json_match.group(0)
                 logger.info(f"📋 Extracted JSON (first 300 chars): {json_str[:300]}")
                 profile = json.loads(json_str)
-                
+
                 # Validate required fields exist
                 if not isinstance(profile, dict):
                     logger.warning(f"Parsed result is not a dict: {type(profile)}")
                     return self._default_profile()
-                
+
                 # Validate and provide defaults
                 parsed_profile = {
                     'technical_skills': profile.get('technical_skills', []),
@@ -264,20 +264,20 @@ class ResumeMatcherAgent:
                     'preferred_locations': profile.get('preferred_locations', []),
                     'salary_min': int(profile.get('salary_min', 0)) if profile.get('salary_min') else None
                 }
-                
+
                 logger.info(f"✅ Parsed profile successfully: {len(parsed_profile.get('technical_skills', []))} skills")
                 return parsed_profile
-            
+
             logger.warning(f"No JSON found in response")
             return self._default_profile()
-            
+
         except json.JSONDecodeError as e:
             logger.warning(f"JSON parsing failed: {e}")
             return self._default_profile()
         except Exception as e:
             logger.error(f"Profile parsing failed: {e}")
             return self._default_profile()
-    
+
     def _default_profile(self) -> Dict:
         """Return default empty profile."""
         return {
@@ -290,20 +290,20 @@ class ResumeMatcherAgent:
             'preferred_locations': [],
             'salary_min': None
         }
-    
+
     def find_matching_jobs(self, profile: Dict, limit: int = 50) -> List[Dict]:
         """
         Step 2: Find similar jobs using SEMANTIC SEARCH with vector embeddings.
-        
+
         Uses Snowflake VECTOR_COSINE_SIMILARITY to compare resume against job descriptions.
         Returns top matches based on semantic similarity.
         """
         cursor = self.conn.cursor()
-        
+
         try:
             # Build search based on profile
             work_auth = profile.get('work_authorization', '')
-            
+
             # Determine compatible visa categories
             compatible_visas = []
             if 'F-1' in work_auth or 'CPT' in work_auth:
@@ -314,29 +314,29 @@ class ResumeMatcherAgent:
                 compatible_visas.append('H-1B')
             if 'Citizen' in work_auth or 'US' in work_auth:
                 compatible_visas.extend(['CPT', 'OPT', 'H-1B', 'US-Only'])
-            
+
             # Default to international student friendly
             if not compatible_visas:
                 compatible_visas = ['CPT', 'OPT', 'H-1B']
-            
+
             # Build resume text for embedding
             skills = profile.get('technical_skills', [])
             desired_roles = profile.get('desired_roles', [])
             experience = profile.get('total_experience_years', 0)
             education = profile.get('education_level', '')
-            
+
             # Create rich resume summary for semantic search
             resume_text = f"""
-            Skills: {', '.join(skills[:15])}. 
-            Desired Roles: {', '.join(desired_roles)}. 
-            Experience: {experience} years. 
+            Skills: {', '.join(skills[:15])}.
+            Desired Roles: {', '.join(desired_roles)}.
+            Experience: {experience} years.
             Education: {education}.
             """
-            
+
             # Escape single quotes for SQL
             resume_text_escaped = resume_text.replace("'", "''")
             visa_filter = "', '".join(compatible_visas)
-            
+
             # SEMANTIC SEARCH using vector embeddings
             sql = f"""
                 WITH resume_embedding AS (
@@ -346,7 +346,7 @@ class ResumeMatcherAgent:
                     ) AS resume_vector
                 ),
                 job_matches AS (
-                    SELECT 
+                    SELECT
                         j.job_id,
                         j.url,
                         j.title,
@@ -376,32 +376,32 @@ class ResumeMatcherAgent:
                 ORDER BY semantic_score DESC, job_id
                 LIMIT {limit}
             """
-            
+
             logger.info(f"🔍 Running semantic search with resume: {len(skills)} skills, {experience} years exp")
             cursor.execute(sql)
             columns = [col[0].lower() for col in cursor.description]
             jobs = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            
+
             logger.info(f"✅ Found {len(jobs)} semantically similar jobs")
             if jobs:
                 logger.info(f"🎯 Top match: {jobs[0].get('title')} (similarity: {jobs[0].get('semantic_score', 0):.2f})")
-            
+
             return jobs
-            
+
         finally:
             cursor.close()
-    
+
     def find_matching_jobs_direct(self, resume_text: str, limit: int = 20) -> List[Dict]:
         """
         SIMPLIFIED: Direct semantic search without profile extraction.
         Embeds raw resume text and compares with job embeddings.
         """
         cursor = self.conn.cursor()
-        
+
         try:
             # Truncate resume if too long (keep first 2000 chars)
             resume_text = resume_text[:2000].replace("'", "''")
-            
+
             # Direct semantic search
             sql = f"""
                 WITH resume_embedding AS (
@@ -411,7 +411,7 @@ class ResumeMatcherAgent:
                     ) AS resume_vector
                 ),
                 job_matches AS (
-                    SELECT 
+                    SELECT
                         j.job_id,
                         j.url,
                         j.title,
@@ -441,31 +441,31 @@ class ResumeMatcherAgent:
                 ORDER BY semantic_score DESC
                 LIMIT {limit}
             """
-            
+
             logger.info(f"🔍 Running direct semantic search (resume length: {len(resume_text)} chars)")
             cursor.execute(sql)
             columns = [col[0].lower() for col in cursor.description]
             jobs = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            
+
             logger.info(f"✅ Found {len(jobs)} jobs with >50% similarity")
             if jobs:
                 logger.info(f"🎯 Top: {jobs[0].get('title')} ({jobs[0].get('semantic_score', 0)*100:.0f}%)")
-            
+
             return jobs
-            
+
         finally:
             cursor.close()
-    
+
     def rerank_jobs(self, profile: Dict, jobs: List[Dict]) -> List[Dict]:
         """Re-rank jobs based on comprehensive scoring (including semantic similarity)."""
         scored_jobs = []
-        
+
         for job in jobs:
             scores = self._calculate_scores(profile, job)
-            
+
             # Get semantic similarity score from vector search (0-1 scale, convert to 0-100)
             semantic_similarity = job.get('semantic_score', 0.5) * 100
-            
+
             # Calculate overall score (weighted average with semantic similarity boost)
             overall_score = round(
                 semantic_similarity * 0.35 +  # NEW: Semantic similarity (35% weight)
@@ -476,7 +476,7 @@ class ResumeMatcherAgent:
                 scores['growth'] * 0.05,       # Reduced from 10%
                 1
             )
-            
+
             # Add scores to job dict (keys are already lowercase from SQL)
             job_with_scores = {
                 'job_id': job.get('job_id', ''),
@@ -499,21 +499,21 @@ class ResumeMatcherAgent:
                 'growth_score': scores['growth'],
                 'match_reasoning': self._generate_reasoning(profile, job, scores)
             }
-            
+
             scored_jobs.append(job_with_scores)
-        
+
         # Sort by overall score (descending)
         ranked_jobs = sorted(scored_jobs, key=lambda x: x['overall_score'], reverse=True)
-        
+
         top_10 = ranked_jobs[:10]
         if top_10:
             logger.info(f"🎯 Top match: {top_10[0].get('title')} at {top_10[0].get('company')} (score: {top_10[0].get('overall_score')})")
-        
+
         return top_10
-    
+
     def _calculate_scores(self, profile: Dict, job: Dict) -> Dict:
         """Calculate individual match scores."""
-        
+
         scores = {
             'skills': 50,      # Default medium
             'experience': 50,
@@ -521,23 +521,23 @@ class ResumeMatcherAgent:
             'location': 50,
             'growth': 50
         }
-        
+
         # Skills score (keyword matching)
         # ENHANCED: Use qualifications field if available for better matching
         candidate_skills = [s.lower() for s in profile.get('technical_skills', [])]
-        
+
         # Prioritize qualifications field, fall back to description (lowercase keys from SQL)
         qualifications = job.get('qualifications', '') or job.get('description', '')
         search_text = qualifications.lower() if qualifications else ''
-        
+
         if candidate_skills:
             matches = sum(1 for skill in candidate_skills if skill in search_text)
             scores['skills'] = min((matches / len(candidate_skills)) * 100, 100)
-        
+
         # Experience score
         exp_years = profile.get('total_experience_years', 0)
         job_title = job.get('title', '').lower()
-        
+
         if 'intern' in job_title and exp_years <= 2:
             scores['experience'] = 90
         elif 'entry' in job_title or 'junior' in job_title:
@@ -546,11 +546,11 @@ class ResumeMatcherAgent:
             scores['experience'] = 90 if exp_years >= 5 else 50
         else:
             scores['experience'] = 75  # Mid-level
-        
+
         # Visa score
         work_auth = profile.get('work_authorization', '')
         visa_cat = job.get('visa_category', '')
-        
+
         if 'CPT' in work_auth and visa_cat == 'CPT':
             scores['visa'] = 100
         elif 'OPT' in work_auth and visa_cat in ['OPT', 'H-1B']:
@@ -563,65 +563,65 @@ class ResumeMatcherAgent:
             scores['visa'] = 0  # Not compatible
         else:
             scores['visa'] = 70  # Uncertain
-        
+
         # Location score
         preferred_locs = [loc.lower() for loc in profile.get('preferred_locations', [])]
         job_location = job.get('location', '').lower() if job.get('location') else ''
-        
+
         if any(loc in job_location for loc in preferred_locs):
             scores['location'] = 95
         elif 'remote' in job_location or 'remote' in preferred_locs:
             scores['location'] = 100
         else:
             scores['location'] = 50
-        
+
         # Growth score (based on company and role)
         company = job.get('company', '').lower() if job.get('company') else ''
         big_tech = ['google', 'microsoft', 'amazon', 'meta', 'apple']
-        
+
         if any(tech in company for tech in big_tech):
             scores['growth'] = 85
         elif job.get('h1b_sponsor'):
             scores['growth'] = 75
         else:
             scores['growth'] = 60
-        
+
         return scores
-    
+
     def _generate_reasoning(self, profile: Dict, job: Dict, scores: Dict) -> str:
         """Generate match reasoning."""
-        
+
         reasons = []
-        
+
         if scores['skills'] >= 80:
             reasons.append("Strong skills match")
         elif scores['skills'] >= 60:
             reasons.append("Good skills overlap")
-        
+
         if scores['experience'] >= 80:
             reasons.append("experience level fits")
-        
+
         if scores['visa'] == 100:
             reasons.append("visa compatible")
         elif scores['visa'] == 0:
             reasons.append("visa incompatible")
-        
+
         if scores['location'] >= 90:
             reasons.append("preferred location")
-        
+
         if not reasons:
             reasons.append("Potential match")
-        
+
         return ", ".join(reasons).capitalize()
-    
+
     def match_resume(self, resume_id: str, resume_text: str) -> Dict:
         """
         Complete matching pipeline - SIMPLIFIED with direct semantic search.
-        
+
         Args:
             resume_id: Unique resume identifier
             resume_text: Full resume text
-            
+
         Returns:
             {
                 "resume_id": str,
@@ -630,12 +630,12 @@ class ResumeMatcherAgent:
                 "total_candidates": int
             }
         """
-        
+
         try:
             # Step 1: Direct semantic search (no profile extraction needed!)
             logger.info("🔍 Semantic search: Matching resume directly to jobs...")
             candidate_jobs = self.find_matching_jobs_direct(resume_text, limit=20)
-            
+
             if not candidate_jobs:
                 logger.warning("⚠️ No candidate jobs found")
                 # Create minimal profile for response compatibility (all required fields)
@@ -655,11 +655,11 @@ class ResumeMatcherAgent:
                     "top_matches": [],
                     "total_candidates": 0
                 }
-            
+
             # Step 2: Re-rank based on semantic scores (already have them from search)
             logger.info("🎯 Ranking top matches by semantic similarity...")
             top_matches = sorted(candidate_jobs, key=lambda x: x.get('semantic_score', 0), reverse=True)[:10]
-            
+
             # Add match reasoning based on semantic score
             for match in top_matches:
                 score = match.get('semantic_score', 0) * 100
@@ -669,19 +669,19 @@ class ResumeMatcherAgent:
                     reasoning = f"Good match ({score:.0f}%) - Your background aligns well with this role"
                 else:
                     reasoning = f"Moderate match ({score:.0f}%) - Some relevant skills and experience"
-                
+
                 match['overall_score'] = score
                 match['skills_score'] = score
                 match['experience_score'] = score
                 match['visa_score'] = 100 if match.get('h1b_sponsor') else 50
                 match['location_score'] = 70
                 match['match_reasoning'] = reasoning
-            
+
             # Step 3: Save to database
             self._save_matches(resume_id, top_matches)
-            
+
             logger.info(f"✅ Matched {len(top_matches)} jobs (top score: {top_matches[0].get('semantic_score', 0)*100:.0f}%)")
-            
+
             # Create minimal profile for response (all required fields with defaults)
             minimal_profile = {
                 'technical_skills': ['Analyzed via semantic search'],
@@ -693,14 +693,14 @@ class ResumeMatcherAgent:
                 'preferred_locations': ['Analyzed via semantic search'],
                 'salary_min': None
             }
-            
+
             return {
                 "resume_id": resume_id,
                 "profile": minimal_profile,
                 "top_matches": top_matches,
                 "total_candidates": len(candidate_jobs)
             }
-            
+
         except Exception as e:
             logger.error(f"❌ Matching failed: {e}")
             return {
@@ -710,17 +710,17 @@ class ResumeMatcherAgent:
                 "total_candidates": 0,
                 "error": str(e)
             }
-    
+
     def _save_matches(self, resume_id: str, matches: List[Dict]):
         """Save matches to database."""
-        
+
         cursor = self.conn.cursor()
-        
+
         try:
             for i, match in enumerate(matches[:10]):
                 job_id = match['job_id']
                 match_id = f"{resume_id}_{job_id}"
-                
+
                 sql = f"""
                     INSERT INTO job_matches (
                         match_id, resume_id, job_id,
@@ -740,17 +740,17 @@ class ResumeMatcherAgent:
                         CURRENT_TIMESTAMP()
                     )
                 """
-                
+
                 cursor.execute(sql)
-            
+
             self.conn.commit()
             logger.info(f"💾 Saved {len(matches[:10])} matches to database")
-            
+
         except Exception as e:
             logger.warning(f"⚠️ Failed to save matches: {e}")
         finally:
             cursor.close()
-    
+
     def close(self):
         """Close connection."""
         if self.conn:

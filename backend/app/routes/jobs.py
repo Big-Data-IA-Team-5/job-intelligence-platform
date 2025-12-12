@@ -44,7 +44,7 @@ class JobsResponse(BaseModel):
 async def search_jobs(filters: JobFilters = Body(...)):
     """
     Search jobs with advanced filtering
-    
+
     **Filters:**
     - search: Keyword search in title, company, description
     - companies: Filter by specific companies
@@ -56,7 +56,7 @@ async def search_jobs(filters: JobFilters = Body(...)):
     - posted_within_days: Filter by recency (1, 7, 30 days)
     - job_types: Full-time, Internship, Contract, etc.
     - sort_by: Sort order (most_recent, highest_salary, company_az, h1b_rate)
-    
+
     **Returns:**
     - jobs: List of job objects with all fields
     - total: Total count of matching jobs
@@ -66,28 +66,28 @@ async def search_jobs(filters: JobFilters = Body(...)):
     try:
         agent = AgentManager.get_search_agent()
         cursor = agent.conn.cursor()
-        
+
         cursor.execute("USE DATABASE job_intelligence")
         cursor.execute("USE SCHEMA processed")
-        
+
         # Build WHERE clauses
         where_clauses = []
-        
+
         # Search query
         if filters.search:
             search_term = filters.search.replace("'", "''")
             where_clauses.append(f"""
-                (LOWER(title) LIKE LOWER('%{search_term}%') 
+                (LOWER(title) LIKE LOWER('%{search_term}%')
                  OR LOWER(company) LIKE LOWER('%{search_term}%')
                  OR LOWER(description) LIKE LOWER('%{search_term}%')
                  OR LOWER(snippet) LIKE LOWER('%{search_term}%'))
             """)
-        
+
         # Company filter
         if filters.companies and len(filters.companies) > 0:
             companies_str = "', '".join([c.replace("'", "''") for c in filters.companies])
             where_clauses.append(f"company IN ('{companies_str}')")
-        
+
         # Location filter
         if filters.locations and len(filters.locations) > 0:
             location_conditions = []
@@ -95,34 +95,34 @@ async def search_jobs(filters: JobFilters = Body(...)):
                 loc_clean = loc.replace("'", "''")
                 location_conditions.append(f"LOWER(location) LIKE LOWER('%{loc_clean}%')")
             where_clauses.append(f"({' OR '.join(location_conditions)})")
-        
+
         # Work model filter
         if filters.work_models and len(filters.work_models) > 0:
             models_str = "', '".join([m.replace("'", "''") for m in filters.work_models])
             where_clauses.append(f"work_model IN ('{models_str}')")
-        
+
         # Visa sponsorship filter
         if filters.visa_sponsorship and filters.visa_sponsorship != "All":
             if filters.visa_sponsorship == "Yes":
                 where_clauses.append("h1b_sponsor = TRUE")
             else:
                 where_clauses.append("(h1b_sponsor = FALSE OR h1b_sponsor IS NULL)")
-        
+
         # Salary filter - handle NULL values properly
         if filters.salary_min and filters.salary_min > 0:
             where_clauses.append(f"(salary_min >= {filters.salary_min} OR salary_max >= {filters.salary_min})")
         if filters.salary_max and filters.salary_max < 500000:
             where_clauses.append(f"(salary_max <= {filters.salary_max} OR (salary_max IS NULL AND salary_min <= {filters.salary_max}))")
-        
+
         # Posted date filter
         if filters.posted_within_days:
             where_clauses.append(f"posted_date >= DATEADD(day, -{filters.posted_within_days}, CURRENT_DATE())")
-        
+
         # Job type filter
         if filters.job_types and len(filters.job_types) > 0:
             types_str = "', '".join([t.replace("'", "''") for t in filters.job_types])
             where_clauses.append(f"job_type IN ('{types_str}')")
-        
+
         # Use LLM to enhance search query with semantic understanding
         if filters.search and len(filters.search) > 3:
             try:
@@ -144,7 +144,7 @@ Respond with JSON:
 }}
 
 Be concise, max 5 items per category."""
-                
+
                 prompt_escaped = semantic_prompt.replace("'", "''")
                 semantic_sql = f"""
                     SELECT SNOWFLAKE.CORTEX.COMPLETE(
@@ -154,14 +154,14 @@ Be concise, max 5 items per category."""
                 """
                 cursor.execute(semantic_sql)
                 semantic_response = cursor.fetchone()[0]
-                
+
                 # Parse and enhance query
                 json_match = re.search(r'\{.*?\}', semantic_response, re.DOTALL)
                 if json_match:
                     semantic_data = json.loads(json_match.group(0))
                     all_terms = (
-                        semantic_data.get('titles', []) + 
-                        semantic_data.get('skills', []) + 
+                        semantic_data.get('titles', []) +
+                        semantic_data.get('skills', []) +
                         semantic_data.get('keywords', [])
                     )
                     if all_terms:
@@ -176,15 +176,15 @@ Be concise, max 5 items per category."""
                             logger.info(f"✨ LLM enhanced search: {filters.search} → {len(all_terms)} terms")
             except Exception as semantic_error:
                 logger.warning(f"Semantic search enhancement failed: {semantic_error}")
-        
+
         # Build WHERE clause
         where_sql = ""
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
-        
+
         # Validate and cap limit
         limit = min(filters.limit or 50, 500)  # Max 500 results
-        
+
         # Build ORDER BY clause
         order_by_map = {
             "most_recent": "scraped_at DESC",
@@ -193,10 +193,10 @@ Be concise, max 5 items per category."""
             "h1b_rate": "h1b_approval_rate DESC NULLS LAST"
         }
         order_by = order_by_map.get(filters.sort_by, "scraped_at DESC")
-        
+
         # Execute query
         query = f"""
-            SELECT 
+            SELECT
                 job_id,
                 title,
                 company,
@@ -234,13 +234,13 @@ Be concise, max 5 items per category."""
             ORDER BY {order_by}
             LIMIT {limit}
         """
-        
+
         logger.info(f"Executing jobs search query with limit={limit}: {query[:200]}...")
         cursor.execute(query)
-        
+
         columns = [col[0].lower() for col in cursor.description]
         jobs = []
-        
+
         for row in cursor.fetchall():
             job = {}
             for i, col in enumerate(columns):
@@ -251,9 +251,9 @@ Be concise, max 5 items per category."""
                 else:
                     job[col] = value
             jobs.append(job)
-        
+
         logger.info(f"✅ Found {len(jobs)} jobs matching filters")
-        
+
         return JobsResponse(
             jobs=jobs,
             total=len(jobs),
@@ -268,7 +268,7 @@ Be concise, max 5 items per category."""
                 "sort_by": filters.sort_by
             }
         )
-        
+
     except Exception as e:
         logger.error(f"❌ Jobs search failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -281,7 +281,7 @@ Be concise, max 5 items per category."""
 async def get_job_stats():
     """
     Get overall job statistics
-    
+
     **Returns:**
     - total_jobs: Total number of jobs
     - unique_companies: Number of unique companies
@@ -295,13 +295,13 @@ async def get_job_stats():
     try:
         agent = AgentManager.get_search_agent()
         cursor = agent.conn.cursor()
-        
+
         cursor.execute("USE DATABASE job_intelligence")
         cursor.execute("USE SCHEMA processed")
-        
+
         # Get comprehensive stats
         cursor.execute("""
-            SELECT 
+            SELECT
                 COUNT(*) as total_jobs,
                 COUNT(DISTINCT company) as unique_companies,
                 COUNT(DISTINCT CASE WHEN h1b_sponsor = TRUE THEN company END) as h1b_sponsors,
@@ -311,9 +311,9 @@ async def get_job_stats():
                 AVG(CASE WHEN salary_min > 0 THEN salary_min END) as avg_salary
             FROM jobs_processed
         """)
-        
+
         row = cursor.fetchone()
-        
+
         return {
             "total_jobs": row[0] or 0,
             "unique_companies": row[1] or 0,
@@ -323,7 +323,7 @@ async def get_job_stats():
             "new_this_week": row[5] or 0,
             "avg_salary": round(row[6], 2) if row[6] else None
         }
-        
+
     except Exception as e:
         logger.error(f"❌ Job stats failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -339,28 +339,28 @@ async def get_companies():
     try:
         agent = AgentManager.get_search_agent()
         cursor = agent.conn.cursor()
-        
+
         cursor.execute("USE DATABASE job_intelligence")
         cursor.execute("USE SCHEMA processed")
-        
+
         # Get raw company data
         cursor.execute("""
             SELECT DISTINCT company, COUNT(*) as job_count
             FROM jobs_processed
-            WHERE company IS NOT NULL 
+            WHERE company IS NOT NULL
                 AND company != ''
             GROUP BY company
             HAVING COUNT(*) >= 5
             ORDER BY job_count DESC
             LIMIT 150
         """)
-        
+
         raw_companies = [{"name": row[0], "job_count": row[1]} for row in cursor.fetchall()]
-        
+
         # Use LLM to filter out invalid companies and provide insights
         if len(raw_companies) > 0:
             companies_list = ", ".join([c["name"] for c in raw_companies[:50]])
-            
+
             prompt = f"""Analyze this list of company names from a job database and identify which are INVALID/JUNK entries.
 
 COMPANY LIST:
@@ -377,9 +377,9 @@ Respond with ONLY a JSON array of company names to KEEP (exclude invalid ones):
 ["Google", "Microsoft", "Amazon", ...]
 
 Keep real company names even if they seem generic (e.g., "Accenture", "Deloitte" are valid)."""
-            
+
             prompt_escaped = prompt.replace("'", "''")
-            
+
             try:
                 sql = f"""
                     SELECT SNOWFLAKE.CORTEX.COMPLETE(
@@ -389,31 +389,31 @@ Keep real company names even if they seem generic (e.g., "Accenture", "Deloitte"
                 """
                 cursor.execute(sql)
                 response = cursor.fetchone()[0]
-                
+
                 # Parse LLM response
                 json_match = re.search(r'\[.*?\]', response, re.DOTALL)
                 if json_match:
                     valid_companies = json.loads(json_match.group(0))
                     # Filter companies based on LLM recommendations
                     filtered_companies = [
-                        c for c in raw_companies 
+                        c for c in raw_companies
                         if c["name"] in valid_companies
                     ][:100]
                     logger.info(f"✨ LLM filtered {len(raw_companies)} → {len(filtered_companies)} companies")
                     return {"companies": filtered_companies}
             except Exception as llm_error:
                 logger.warning(f"LLM filtering failed: {llm_error}, using fallback")
-        
+
         # Fallback to manual filtering
-        invalid_terms = ['United States', 'Enterprise', 'STR', 'AR', 'Remote', 'USA', 
+        invalid_terms = ['United States', 'Enterprise', 'STR', 'AR', 'Remote', 'USA',
                         'Hybrid', 'Corporation', 'Company', 'Inc', 'LLC']
         companies = [
-            c for c in raw_companies 
+            c for c in raw_companies
             if c["name"] not in invalid_terms and len(c["name"]) > 2
         ][:100]
-        
+
         return {"companies": companies}
-        
+
     except Exception as e:
         logger.error(f"❌ Get companies failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -429,10 +429,10 @@ async def get_locations():
     try:
         agent = AgentManager.get_search_agent()
         cursor = agent.conn.cursor()
-        
+
         cursor.execute("USE DATABASE job_intelligence")
         cursor.execute("USE SCHEMA processed")
-        
+
         cursor.execute("""
             SELECT DISTINCT location, COUNT(*) as job_count
             FROM jobs_processed
@@ -443,13 +443,13 @@ async def get_locations():
             ORDER BY job_count DESC
             LIMIT 80
         """)
-        
+
         raw_locations = [{"name": row[0], "job_count": row[1]} for row in cursor.fetchall()]
-        
+
         # Use LLM to clean and standardize location data
         if len(raw_locations) > 0:
             locations_list = ", ".join([loc["name"] for loc in raw_locations[:60]])
-            
+
             prompt = f"""Analyze this list of job locations and provide cleaned/standardized versions.
 
 RAW LOCATIONS:
@@ -469,9 +469,9 @@ Respond with JSON object mapping standardized location to total count:
 }}
 
 Only include real, specific locations (cities/states, not generic terms)."""
-            
+
             prompt_escaped = prompt.replace("'", "''")
-            
+
             try:
                 sql = f"""
                     SELECT SNOWFLAKE.CORTEX.COMPLETE(
@@ -481,30 +481,30 @@ Only include real, specific locations (cities/states, not generic terms)."""
                 """
                 cursor.execute(sql)
                 response = cursor.fetchone()[0]
-                
+
                 # Parse LLM response
                 json_match = re.search(r'\{.*?\}', response, re.DOTALL)
                 if json_match:
                     standardized_locs = json.loads(json_match.group(0))
                     locations = [
-                        {"name": name, "job_count": count} 
-                        for name, count in sorted(standardized_locs.items(), 
+                        {"name": name, "job_count": count}
+                        for name, count in sorted(standardized_locs.items(),
                                                  key=lambda x: x[1], reverse=True)
                     ][:50]
                     logger.info(f"✨ LLM standardized {len(raw_locations)} → {len(locations)} locations")
                     return {"locations": locations}
             except Exception as llm_error:
                 logger.warning(f"LLM standardization failed: {llm_error}, using fallback")
-        
+
         # Fallback to manual filtering
         invalid_terms = ['Remote', 'USA', 'Hybrid', 'United States', 'N/A', 'NA']
         locations = [
-            loc for loc in raw_locations 
+            loc for loc in raw_locations
             if loc["name"] not in invalid_terms and len(loc["name"]) > 2
         ][:50]
-        
+
         return {"locations": locations}
-        
+
     except Exception as e:
         logger.error(f"❌ Get locations failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

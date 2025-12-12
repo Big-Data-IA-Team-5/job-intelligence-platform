@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 class SnowflakeClient:
     """Snowflake database client"""
-    
+
     def __init__(self):
         self.connection = None
         self.connect()
-    
+
     def connect(self):
         """Establish connection to Snowflake"""
         try:
@@ -34,29 +34,29 @@ class SnowflakeClient:
         except Exception as e:
             logger.error(f"Failed to connect to Snowflake: {str(e)}")
             raise
-    
+
     def execute_query(self, query: str, params: Optional[List[Any]] = None) -> pd.DataFrame:
         """
         Execute a query and return results as DataFrame
-        
+
         Args:
             query: SQL query string
             params: Query parameters for parameterized queries
-            
+
         Returns:
             DataFrame with query results
         """
         try:
             if not self.connection or self.connection.is_closed():
                 self.connect()
-            
+
             cursor = self.connection.cursor()
-            
+
             if params:
                 cursor.execute(query, params)
             else:
                 cursor.execute(query)
-            
+
             # Fetch results
             if cursor.description:
                 columns = [col[0] for col in cursor.description]
@@ -64,38 +64,38 @@ class SnowflakeClient:
                 df = pd.DataFrame(data, columns=columns)
             else:
                 df = pd.DataFrame()
-            
+
             cursor.close()
             return df
-            
+
         except Exception as e:
             logger.error(f"Query execution failed: {str(e)}")
             raise
-    
+
     def execute_many(self, query: str, data: List[tuple]):
         """Execute a query with multiple parameter sets"""
         try:
             if not self.connection or self.connection.is_closed():
                 self.connect()
-            
+
             cursor = self.connection.cursor()
             cursor.executemany(query, data)
             self.connection.commit()
             cursor.close()
-            
+
         except Exception as e:
             logger.error(f"Bulk execution failed: {str(e)}")
             self.connection.rollback()
             raise
-    
+
     def write_dataframe(self, df: pd.DataFrame, table_name: str, schema: str = None):
         """Write DataFrame to Snowflake table"""
         try:
             if not self.connection or self.connection.is_closed():
                 self.connect()
-            
+
             schema = schema or settings.SNOWFLAKE_SCHEMA
-            
+
             success, nchunks, nrows, _ = write_pandas(
                 conn=self.connection,
                 df=df,
@@ -105,22 +105,22 @@ class SnowflakeClient:
                 auto_create_table=False,
                 overwrite=False
             )
-            
+
             return success, nrows
-            
+
         except Exception as e:
             logger.error(f"DataFrame write failed: {str(e)}")
             raise
-    
+
     def close(self):
         """Close connection"""
         if self.connection and not self.connection.is_closed():
             self.connection.close()
             logger.info("Snowflake connection closed")
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 

@@ -38,7 +38,9 @@ def generate_embeddings():
         password=sf['password'],
         database='JOB_INTELLIGENCE',
         warehouse=sf['warehouse'],
-        schema='PROCESSED_PROCESSING'
+        schema='PROCESSED_PROCESSING',
+        ocsp_fail_open=True,  # Allow connection even if OCSP check fails
+        insecure_mode=False   # Keep SSL enabled but be more lenient
     )
     
     cursor = conn.cursor()
@@ -93,19 +95,19 @@ def generate_embeddings():
             USING (
                 SELECT
                     e.job_id,
-                    e.source,
-                    e.url,
+                    r.source,
+                    r.url,
                     e.title,
                     e.company,
                     e.location,
                     e.description,
-                    e.snippet,
-                    e.job_type,
-                    e.posted_date,
+                    r.snippet,
+                    r.job_type,
+                    r.posted_date,
                     e.scraped_at,
-                    e.salary_min,
-                    e.salary_max,
-                    e.salary_text,
+                    r.salary_min,
+                    r.salary_max,
+                    r.salary_text,
                     e.h1b_sponsor,
                     e.h1b_employer_name,
                     e.h1b_city,
@@ -113,11 +115,11 @@ def generate_embeddings():
                     e.total_petitions,
                     e.avg_approval_rate,
                     e.description_embedding,
-                    e.processed_at,
+                    r.processed_at,
                     e.company as company_clean,
                     'H-1B' as visa_category,
                     '' as qualifications,
-                    DATEDIFF(day, e.posted_date, CURRENT_DATE()) as days_since_posted,
+                    DATEDIFF(day, r.posted_date, CURRENT_DATE()) as days_since_posted,
                     1.0 as classification_confidence,
                     CASE WHEN e.is_remote THEN 'Remote' ELSE 'On-site' END as work_model,
                     '' as department,
@@ -131,6 +133,7 @@ def generate_embeddings():
                     NULL as h1b_risk_level,
                     NULL as h1b_avg_wage
                 FROM PROCESSED_PROCESSING.EMBEDDED_JOBS e
+                JOIN RAW.JOBS_RAW r ON e.job_id = r.job_id AND e.source = r.source
                 WHERE e.job_id IN ('{batch_ids}')
             ) e
             ON p.job_id = e.job_id

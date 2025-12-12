@@ -20,7 +20,7 @@ router = APIRouter(tags=["Health"])
 async def health_check():
     """
     Health check endpoint
-    
+
     Returns:
         - API status
         - Version
@@ -31,24 +31,24 @@ async def health_check():
     try:
         # Test agent connections
         agent_status = AgentManager.test_connections()
-        
+
         # Check cache health
         cache = get_cache()
         cache_health = cache.health_check()
-        
+
         # Determine Snowflake status
         snowflake_healthy = all(
-            "healthy" in status 
+            "healthy" in status
             for status in agent_status.values()
         )
-        
+
         # Overall status
         overall_status = "healthy"
         if not snowflake_healthy:
             overall_status = "degraded"
         if cache_health["status"] == "degraded":
             overall_status = "degraded"
-        
+
         response_data = {
             "status": overall_status,
             "version": settings.VERSION,
@@ -56,9 +56,9 @@ async def health_check():
             "snowflake": "connected" if snowflake_healthy else "connection issues",
             "cache": cache_health
         }
-        
+
         return HealthResponse(**response_data)
-    
+
     except Exception as e:
         return HealthResponse(
             status="unhealthy",

@@ -24,13 +24,13 @@ except ImportError:
 
 class CacheManager:
     """Production-level cache manager with Redis support and in-memory fallback."""
-    
+
     def __init__(self):
         self.redis_enabled = os.getenv('REDIS_ENABLED', 'false').lower() == 'true'
         self.redis_client = None
         self.memory_cache = {}  # Fallback in-memory cache
         self.default_ttl = 300  # 5 minutes
-        
+
         # Try to connect to Redis if enabled
         if self.redis_enabled and REDIS_AVAILABLE:
             try:
@@ -52,15 +52,15 @@ class CacheManager:
                 self.redis_client = None
         else:
             logger.info("📦 Using in-memory cache (Redis disabled or unavailable)")
-    
+
     def _get_key(self, namespace: str, key: str) -> str:
         """Generate cache key with namespace."""
         return f"{namespace}:{key}"
-    
+
     def get(self, namespace: str, key: str) -> Optional[Any]:
         """Get value from cache."""
         cache_key = self._get_key(namespace, key)
-        
+
         # Try Redis first
         if self.redis_client:
             try:
@@ -70,7 +70,7 @@ class CacheManager:
                     return json.loads(value)
             except Exception as e:
                 logger.error(f"❌ Redis GET error: {e}")
-        
+
         # Fallback to in-memory cache
         if cache_key in self.memory_cache:
             cached_data, expiry = self.memory_cache[cache_key]
@@ -81,15 +81,15 @@ class CacheManager:
                 # Expired
                 del self.memory_cache[cache_key]
                 logger.info(f"⏰ Memory cache EXPIRED: {cache_key[:50]}...")
-        
+
         logger.info(f"❌ Cache MISS: {cache_key[:50]}...")
         return None
-    
+
     def set(self, namespace: str, key: str, value: Any, ttl: int = None) -> bool:
         """Set value in cache with TTL."""
         cache_key = self._get_key(namespace, key)
         ttl = ttl or self.default_ttl
-        
+
         # Try Redis first
         if self.redis_client:
             try:
@@ -102,43 +102,43 @@ class CacheManager:
                 return True
             except Exception as e:
                 logger.error(f"❌ Redis SET error: {e}")
-        
+
         # Fallback to in-memory cache
         expiry = datetime.now() + timedelta(seconds=ttl)
         self.memory_cache[cache_key] = (value, expiry)
-        
+
         # Limit in-memory cache size (LRU)
         if len(self.memory_cache) > 1000:
-            oldest_key = min(self.memory_cache.keys(), 
+            oldest_key = min(self.memory_cache.keys(),
                            key=lambda k: self.memory_cache[k][1])
             del self.memory_cache[oldest_key]
             logger.info(f"🧹 Memory cache cleaned (removed oldest entry)")
-        
+
         logger.info(f"✅ Memory cache SET: {cache_key[:50]}... (TTL: {ttl}s)")
         return True
-    
+
     def delete(self, namespace: str, key: str) -> bool:
         """Delete value from cache."""
         cache_key = self._get_key(namespace, key)
-        
+
         # Delete from Redis
         if self.redis_client:
             try:
                 self.redis_client.delete(cache_key)
             except Exception as e:
                 logger.error(f"❌ Redis DELETE error: {e}")
-        
+
         # Delete from in-memory cache
         if cache_key in self.memory_cache:
             del self.memory_cache[cache_key]
-        
+
         logger.info(f"🗑️ Cache deleted: {cache_key[:50]}...")
         return True
-    
+
     def clear_namespace(self, namespace: str) -> int:
         """Clear all keys in a namespace."""
         count = 0
-        
+
         # Clear from Redis
         if self.redis_client:
             try:
@@ -149,17 +149,17 @@ class CacheManager:
                 logger.info(f"🧹 Redis cleared {count} keys from {namespace}")
             except Exception as e:
                 logger.error(f"❌ Redis CLEAR error: {e}")
-        
+
         # Clear from in-memory cache
         prefix = f"{namespace}:"
         keys_to_delete = [k for k in self.memory_cache.keys() if k.startswith(prefix)]
         for key in keys_to_delete:
             del self.memory_cache[key]
             count += 1
-        
+
         logger.info(f"🧹 Cleared {count} keys from namespace: {namespace}")
         return count
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
         stats = {
@@ -167,7 +167,7 @@ class CacheManager:
             "memory_cache_size": len(self.memory_cache),
             "default_ttl": self.default_ttl
         }
-        
+
         if self.redis_client:
             try:
                 info = self.redis_client.info('stats')
@@ -179,9 +179,9 @@ class CacheManager:
                 }
             except Exception as e:
                 logger.error(f"❌ Redis stats error: {e}")
-        
+
         return stats
-    
+
     def health_check(self) -> Dict[str, Any]:
         """Check cache health."""
         health = {
@@ -189,7 +189,7 @@ class CacheManager:
             "redis_available": False,
             "memory_cache_available": True
         }
-        
+
         if self.redis_client:
             try:
                 self.redis_client.ping()
@@ -198,7 +198,7 @@ class CacheManager:
                 health["status"] = "degraded"
                 health["redis_error"] = str(e)
                 logger.warning(f"⚠️ Redis health check failed: {e}")
-        
+
         return health
 
 

@@ -19,13 +19,13 @@ router = APIRouter(prefix="/api", tags=["Classification"])
 async def classify_job(request: ClassifyRequest):
     """
     Classify job visa eligibility
-    
+
     Uses Agent 3 (Mixtral 8x7B) to determine:
     - CPT (internships for F-1 students)
     - OPT (entry-level for recent grads)
     - H-1B (requires sponsorship)
     - US-Only (citizenship required)
-    
+
     **Example Request:**
     ```json
     {
@@ -34,7 +34,7 @@ async def classify_job(request: ClassifyRequest):
       "description": "Summer internship for students. CPT eligible..."
     }
     ```
-    
+
     **Returns:**
     - Visa category (CPT/OPT/H-1B/US-Only)
     - Confidence score (0-1)
@@ -42,19 +42,19 @@ async def classify_job(request: ClassifyRequest):
     - AI reasoning
     - Whether human review needed
     """
-    
+
     classifier = None
     try:
         # Initialize Agent 3
         classifier = AgentManager.get_classifier()
-        
+
         # Classify
         result = classifier.classify_job({
             'title': request.title,
             'company': request.company,
             'description': request.description
         })
-        
+
         return ClassifyResponse(
             visa_category=result['visa_category'],
             confidence=result['confidence'],
@@ -62,14 +62,14 @@ async def classify_job(request: ClassifyRequest):
             reasoning=result.get('reasoning', ''),
             needs_review=result.get('needs_review', False)
         )
-    
+
     except Exception as e:
         logger.error(f"Classification error: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Classification failed: {str(e)}"
         )
-    
+
     finally:
         if classifier:
             classifier.close()
