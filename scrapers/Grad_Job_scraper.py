@@ -768,8 +768,20 @@ class AirtableJobScraper:
         max_scroll_attempts = 50
         old_jobs_in_a_row = 0
         max_old_jobs = 20
+        last_job_count = 0
+        stalled_iterations = 0
         
         while no_new_data_count < 5 and scroll_attempts < max_scroll_attempts and old_jobs_in_a_row < max_old_jobs:
+            # Detect if scraper is stalled (no progress for 3 iterations)
+            if len(jobs) == last_job_count:
+                stalled_iterations += 1
+                if stalled_iterations >= 3:
+                    with self.lock:
+                        logger.error(f"  ❌ Scraper stalled - no new jobs for 3 iterations at {len(jobs)} jobs")
+                    break
+            else:
+                stalled_iterations = 0
+                last_job_count = len(jobs)
             with self.lock:
                 logger.info(f"\n  → Scroll attempt {scroll_attempts + 1} | Recent jobs: {len(jobs)}")
             
@@ -799,7 +811,23 @@ class AirtableJobScraper:
                     logger.info(f"\n  🏁 Reached jobs older than {self.hours_lookback} hours - stopping")
                 break
             
-            self.perform_scroll_with_driver(driver)
+            # Check driver health before scrolling
+            try:
+                _ = driver.title  # Quick check if driver is alive
+            except Exception as health_err:
+                with self.lock:
+                    logger.error(f"  ❌ WebDriver crashed: {str(health_err)}")
+                    logger.info(f"  ℹ️  Collected {len(jobs)} jobs before crash")
+                break
+            
+            try:
+                self.perform_scroll_with_driver(driver)
+            except Exception as scroll_err:
+                with self.lock:
+                    logger.error(f"  ❌ Scroll failed at attempt {scroll_attempts + 1}: {str(scroll_err)}")
+                    logger.info(f"  ℹ️  Collected {len(jobs)} jobs before scroll failure")
+                break
+            
             scroll_attempts += 1
         
         return jobs, date_samples
@@ -814,6 +842,9 @@ class AirtableJobScraper:
     def perform_scroll_with_driver(self, driver):
         """Perform various scrolling methods with specific driver"""
         try:
+            # Check if driver is still alive
+            driver.current_url  # Will raise exception if driver crashed
+            
             driver.execute_script("window.scrollBy(0, 600);")
             time.sleep(0.5)
             
@@ -822,7 +853,8 @@ class AirtableJobScraper:
                 try:
                     driver.execute_script("arguments[0].scrollTop += 600;", div)
                     time.sleep(0.3)
-                except:
+                except Exception as div_err:
+                    logger.debug(f"Div scroll failed: {str(div_err)[:50]}")
                     pass
             
             body = driver.find_element(By.TAG_NAME, "body")
@@ -830,7 +862,8 @@ class AirtableJobScraper:
             time.sleep(0.5)
             
         except Exception as e:
-            pass
+            logger.error(f"❌ Scroll operation failed: {str(e)}")
+            raise  # Re-raise to be caught by caller
     
     def perform_scroll(self):
         """Legacy method - kept for compatibility"""
@@ -844,7 +877,16 @@ class AirtableJobScraper:
         date_samples = []
         
         try:
+            # Set page load timeout to prevent hanging
+            driver.set_page_load_timeout(30)
+            driver.implicitly_wait(5)  # Max 5 seconds for element lookups
+            
             all_row_elements = driver.find_elements(By.CSS_SELECTOR, 'div.dataRow[data-rowid]')
+            
+            # If no elements found and driver seems stuck, raise exception
+            if not all_row_elements:
+                logger.warning("  ⚠️  No row elements found - page may be stuck")
+                return new_jobs, old_job_count, date_samples
             
             rows_by_id = {}
             for elem in all_row_elements:

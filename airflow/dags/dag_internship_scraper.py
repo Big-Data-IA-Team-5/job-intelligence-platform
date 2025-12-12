@@ -25,9 +25,9 @@ default_args = {
     'depends_on_past': False,
     'email_on_failure': False,
     'email_on_retry': False,
-    'retries': 1,
+    'retries': 2,
     'retry_delay': timedelta(minutes=5),
-    'execution_timeout': timedelta(hours=8),  # 8 hours for 15 days of data scraping
+    'execution_timeout': timedelta(hours=2, minutes=45),  # 2h 45min to stay under Celery 3hr timeout
 }
 
 def scrape_internship_jobs(**context):
@@ -39,13 +39,14 @@ def scrape_internship_jobs(**context):
     import traceback
     
     def timeout_handler(signum, frame):
-        print("\n⏱️  TIMEOUT: Scraper exceeded 45-minute limit")
-        raise TimeoutError("Scraper timeout after 45 minutes")
+        print("\n⏱️  TIMEOUT: Scraper exceeded 2h 45m limit")
+        raise TimeoutError("Scraper timeout - Celery worker limit reached")
     
     try:
-        # Set timeout to 45 minutes
+        # Timeout managed by Airflow's execution_timeout parameter (2h 45m)
+        # No need for signal.alarm() which can interfere with proper error logging
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(2700)  # 45 minutes
+        signal.alarm(9900)  # 2h 45m in seconds (slightly under Celery 3hr limit)
         
         # Load code from GCS
         print("\n" + "="*80)
@@ -73,13 +74,14 @@ def scrape_internship_jobs(**context):
         sys.stdout.flush()
         cleanup_old_s3_files(prefix='raw/airtable/internships/', days_to_keep=30)
         
-        hours_lookback = 360
-        num_workers = 1  # 1 worker for Composer (Selenium resource limits)
+        # Configuration - PRODUCTION OPTIMIZED (Celery timeout = 3 hours)
+        hours_lookback = 168  # 7 days (reduced from 15 to fit Celery 3hr timeout)
+        num_workers = 3  # 3 workers for fast parallel scraping (16GB RAM per worker)
         
         print(f"\n⚙️  Configuration:")
         print(f"   Time window: Last {hours_lookback} hours ({hours_lookback/24:.0f} days)")
         print(f"   Workers: {num_workers}")
-        print(f"   Max timeout: 45 minutes")
+        print(f"   Celery timeout: 3 hours (Composer default)")
         sys.stdout.flush()
         
         # Initialize scraper

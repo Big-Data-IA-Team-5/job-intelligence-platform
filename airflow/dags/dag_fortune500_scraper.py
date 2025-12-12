@@ -24,9 +24,9 @@ default_args = {
     'depends_on_past': False,
     'email_on_failure': False,
     'email_on_retry': False,
-    'retries': 1,
+    'retries': 2,
     'retry_delay': timedelta(minutes=15),
-    'execution_timeout': timedelta(hours=8),  # 8 hours for 50 companies with fallbacks
+    'execution_timeout': timedelta(hours=2, minutes=45),  # 2h 45min to stay under Celery 3hr timeout
 }
 
 def scrape_fortune500_jobs(**context):
@@ -36,13 +36,14 @@ def scrape_fortune500_jobs(**context):
     import traceback
     
     def timeout_handler(signum, frame):
-        print("\n⏱️  TIMEOUT: Scraper exceeded 8-hour limit")
-        raise TimeoutError("Scraper timeout after 8 hours")
+        print("\n⏱️  TIMEOUT: Scraper exceeded 2h 45m limit")
+        raise TimeoutError("Scraper timeout - Celery worker limit reached")
     
     try:
-        # Set timeout to 8 hours (Fortune 500 needs more time, 8 workers)
+        # Timeout managed by Airflow's execution_timeout parameter (2h 45m)
+        # Set to stay under Celery 3hr worker timeout with 8-worker HTTP parallelism
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(28800)  # 8 hours for 8-worker Fortune 500 scrape
+        signal.alarm(9900)  # 2h 45m in seconds (slightly under Celery 3hr limit)
         
         # Load code from GCS
         print("\n" + "="*80)
@@ -93,8 +94,10 @@ def scrape_fortune500_jobs(**context):
         print("✅ Scraper initialized (HTTP-only mode for 8-worker parallel)")
         sys.stdout.flush()
         
-        # Initialize progress manager
-        progress = ProgressManager()
+        # Initialize progress manager with GCS persistence
+        progress = ProgressManager(gcs_bucket=bucket)
+        print("✅ Progress manager initialized with GCS persistence")
+        sys.stdout.flush()
         
         # Download CSV from GCS if not exists locally
         csv_path = '/tmp/airflow_code/fortune500_career_pages_validated.csv'
@@ -120,18 +123,23 @@ def scrape_fortune500_jobs(**context):
                     'url': row['final_career_url']
                 })
         
-        # Filter out completed companies - PRODUCTION OPTIMIZED
+        # Filter out completed companies - BATCH PROCESSING FOR RELIABILITY
+        # Process 150 companies per run to stay well under 2h 45m timeout
+        # Subsequent runs will automatically resume from where previous run stopped
         companies_to_scrape = [
             c for c in companies 
             if not progress.is_completed(c['name'])
-        ][:200]  # Scrape 200 companies per run (increased from 50)
+        ][:150]  # Process 150 companies per run (completes in ~90-120 min with 8 workers)
         
         print(f"\n⚙️  Configuration:")
         print(f"   Total companies in CSV: {len(companies)}")
-        print(f"   Companies to scrape: {len(companies_to_scrape)}")
+        print(f"   Already completed: {len(progress.completed)}")
+        print(f"   Remaining: {len([c for c in companies if not progress.is_completed(c['name'])])} companies")
+        print(f"   This batch: {len(companies_to_scrape)} companies")
         print(f"   Max workers: 8 (optimized for Fortune 500 HTTP-only)")
-        print(f"   Time window: Last 15 days")
-        print(f"   Timeout: 8 hours")
+        print(f"   Time window: Last 7 days (jobs posted within 168 hours)")
+        print(f"   Batch size: 150 companies per run (~90-120 min)")
+        print(f"   Celery timeout: 3 hours (Composer default)")
         sys.stdout.flush()
         
         all_jobs = []
@@ -189,6 +197,11 @@ def scrape_fortune500_jobs(**context):
         print(f"   Total jobs scraped: {len(all_jobs)}")
         print(f"   Successful companies: {successful_companies}")
         print(f"   Failed companies: {failed_companies}")
+        print(f"\n📈 Overall Progress:")
+        print(f"   Total completed: {len(progress.completed)}/500 companies")
+        print(f"   Remaining: {500 - len(progress.completed)} companies")
+        if len(progress.completed) < 500:
+            print(f"   ℹ️  Next DAG run will automatically resume and scrape the next batch")
         sys.stdout.flush()
         
         # Push to XCom for next tasks

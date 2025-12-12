@@ -1800,25 +1800,84 @@ class UltraSmartScraper:
 # ============================================================================
 
 class ProgressManager:
-    """Manages progress with thread-safe operations"""
+    """Manages progress with GCS-backed persistence and automatic weekly reset"""
     
-    def __init__(self):
-        self.checkpoint_file = 'scraped_jobs/fortune500_progress.json'
+    def __init__(self, reset_after_days: int = 7, gcs_bucket: str = None):
+        self.local_checkpoint_file = '/tmp/fortune500_progress.json'
+        self.gcs_bucket = gcs_bucket
+        self.gcs_blob_path = 'data/fortune500_progress.json' if gcs_bucket else None
+        self.reset_after_days = reset_after_days
         self.completed = self.load_progress()
         self.lock = Lock()  # Thread-safe operations
     
     def load_progress(self) -> Set[str]:
-        if os.path.exists(self.checkpoint_file):
-            with open(self.checkpoint_file, 'r') as f:
-                return set(json.load(f).get('completed', []))
+        """Load progress from GCS first, then fall back to local file"""
+        # Try loading from GCS first (persistent across Composer runs)
+        if self.gcs_bucket and self.gcs_blob_path:
+            try:
+                from google.cloud import storage
+                client = storage.Client()
+                bucket = client.bucket(self.gcs_bucket.replace('gs://', ''))
+                blob = bucket.blob(self.gcs_blob_path)
+                
+                if blob.exists():
+                    content = blob.download_as_text()
+                    data = json.loads(content)
+                    
+                    # Check if progress should be reset (older than reset_after_days)
+                    last_updated = data.get('last_updated')
+                    if last_updated:
+                        from datetime import datetime, timedelta
+                        last_updated_dt = datetime.fromisoformat(last_updated)
+                        if datetime.now() - last_updated_dt > timedelta(days=self.reset_after_days):
+                            print(f"ℹ️  Progress file is {(datetime.now() - last_updated_dt).days} days old - resetting for fresh scrape")
+                            return set()
+                    
+                    print(f"✅ Loaded progress from GCS: {len(data.get('completed', []))} companies completed")
+                    return set(data.get('completed', []))
+            except Exception as e:
+                print(f"⚠️  Could not load progress from GCS: {e}")
+        
+        # Fall back to local file (for backward compatibility)
+        if os.path.exists(self.local_checkpoint_file):
+            try:
+                with open(self.local_checkpoint_file, 'r') as f:
+                    data = json.load(f)
+                    return set(data.get('completed', []))
+            except:
+                pass
+        
         return set()
     
     def save_progress(self, company: str):
+        """Save progress to both GCS (primary) and local file (backup)"""
         with self.lock:
             self.completed.add(company)
-            os.makedirs('POC_OUTPUT', exist_ok=True)
-            with open(self.checkpoint_file, 'w') as f:
-                json.dump({'completed': list(self.completed)}, f)
+            
+            from datetime import datetime
+            progress_data = {
+                'completed': list(self.completed),
+                'last_updated': datetime.now().isoformat()
+            }
+            
+            # Save to GCS (persistent storage)
+            if self.gcs_bucket and self.gcs_blob_path:
+                try:
+                    from google.cloud import storage
+                    client = storage.Client()
+                    bucket = client.bucket(self.gcs_bucket.replace('gs://', ''))
+                    blob = bucket.blob(self.gcs_blob_path)
+                    blob.upload_from_string(json.dumps(progress_data), content_type='application/json')
+                except Exception as e:
+                    print(f"⚠️  Warning: Could not save progress to GCS: {e}")
+            
+            # Also save locally as backup
+            os.makedirs('/tmp', exist_ok=True)
+            try:
+                with open(self.local_checkpoint_file, 'w') as f:
+                    json.dump(progress_data, f)
+            except Exception as e:
+                print(f"⚠️  Warning: Could not save local progress: {e}")
     
     def is_completed(self, company: str) -> bool:
         with self.lock:

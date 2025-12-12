@@ -30,19 +30,19 @@ RUN useradd -m -u 1000 streamlit && \
 
 USER streamlit
 
-# Expose port
-EXPOSE 8501
+# Expose port (Cloud Run will set PORT env var to 8080)
+EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+    CMD curl -f http://localhost:${PORT:-8080}/_stcore/health || exit 1
 
-# Run Streamlit with production settings
-CMD ["streamlit", "run", "Home.py", \
-     "--server.port=8501", \
-     "--server.address=0.0.0.0", \
-     "--server.headless=true", \
-     "--server.enableCORS=false", \
-     "--server.enableXsrfProtection=true", \
-     "--server.maxUploadSize=200", \
-     "--browser.gatherUsageStats=false"]
+# Run Streamlit with production settings using PORT env variable
+CMD streamlit run Home.py \
+     --server.port=${PORT:-8080} \
+     --server.address=0.0.0.0 \
+     --server.headless=true \
+     --server.enableCORS=false \
+     --server.enableXsrfProtection=true \
+     --server.maxUploadSize=200 \
+     --browser.gatherUsageStats=false

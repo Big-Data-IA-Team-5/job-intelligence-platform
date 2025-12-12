@@ -30,7 +30,7 @@ The Job Intelligence Platform is a production-ready system that automates the en
 4. **💬 Powers** a conversational AI interface for natural language job search
 5. **📊 Visualizes** trends, salaries, and company insights
 
-**Live Demo**: [Frontend](https://job-intelligence-frontend-project.run.app) • [API Docs](https://job-intelligence-backend-project.run.app/docs)
+**Live Demo**: [Frontend](https://job-intelligence-frontend-97083220044.us-central1.run.app) • [API Docs](https://job-intelligence-backend-97083220044.us-central1.run.app/docs)
 
 ## ✨ Features
 

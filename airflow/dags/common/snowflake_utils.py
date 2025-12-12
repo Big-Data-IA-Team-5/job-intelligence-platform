@@ -57,14 +57,19 @@ def escape_json_for_sql(json_str):
 
 def load_secrets():
     """Load secrets from secrets.json file"""
-    # Try Composer/GCS download location first (from setup_code_dependencies)
-    composer_path = Path('/tmp/airflow_code/secrets.json')
-    # Then Docker mount locations
+    # Priority order for finding secrets.json:
+    # 1. Cloud Composer GCS FUSE mount (production)
+    composer_gcs_path = Path('/home/airflow/gcs/data/secrets.json')
+    # 2. Temp location from setup_code_dependencies
+    composer_tmp_path = Path('/tmp/airflow_code/secrets.json')
+    # 3. Docker mount locations (local testing)
     docker_path = Path('/opt/airflow/secrets/secrets.json')
     docker_path_alt = Path('/opt/airflow/secrets.json')
     
-    if composer_path.exists():
-        secrets_path = composer_path
+    if composer_gcs_path.exists():
+        secrets_path = composer_gcs_path
+    elif composer_tmp_path.exists():
+        secrets_path = composer_tmp_path
     elif docker_path.exists():
         secrets_path = docker_path
     elif docker_path_alt.exists():
@@ -76,7 +81,7 @@ def load_secrets():
         secrets_path = project_root / 'secrets.json'
     
     if not secrets_path.exists():
-        raise FileNotFoundError(f"secrets.json not found at {secrets_path}")
+        raise FileNotFoundError(f"secrets.json not found. Tried paths: {composer_gcs_path}, {composer_tmp_path}, {docker_path}, {docker_path_alt}, {project_root / 'secrets.json' if 'project_root' in locals() else 'N/A'}")
     
     with open(secrets_path, 'r') as f:
         return json.load(f)

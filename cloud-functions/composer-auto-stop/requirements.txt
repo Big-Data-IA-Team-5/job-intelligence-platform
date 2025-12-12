@@ -1,0 +1,3 @@
+google-cloud-composer==1.10.0
+google-cloud-pubsub==2.18.4
+functions-framework==3.5.0

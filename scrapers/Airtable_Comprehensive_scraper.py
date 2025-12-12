@@ -316,11 +316,41 @@ class ComprehensiveAirtableScraper:
                             # Composer/Airflow - use chromedriver-binary package
                             with self.lock:
                                 logger.info("💻 Using chromedriver-binary package (Composer/Airflow mode)")
-                            # chromedriver-binary package includes the driver - just import to add to PATH
-                            import chromedriver_binary
-                            driver = webdriver.Chrome(options=chrome_options)
-                            with self.lock:
-                                logger.info("✓ Chrome driver initialized from chromedriver-binary package")
+                            
+                            # Retry Chrome initialization with exponential backoff
+                            max_chrome_retries = 3
+                            for retry in range(max_chrome_retries):
+                                try:
+                                    # chromedriver-binary package includes the driver - just import to add to PATH
+                                    import chromedriver_binary
+                                    
+                                    # Give Chrome more time to start in container environment
+                                    service = webdriver.ChromeService()
+                                    service.start()
+                                    time.sleep(2)  # Wait for Chrome to fully start
+                                    
+                                    driver = webdriver.Chrome(service=service, options=chrome_options)
+                                    with self.lock:
+                                        logger.info("✓ Chrome driver initialized from chromedriver-binary package")
+                                    break
+                                except Exception as e:
+                                    if retry < max_chrome_retries - 1:
+                                        wait_time = (retry + 1) * 3  # 3, 6, 9 seconds
+                                        with self.lock:
+                                            logger.warning(f"⚠️  Chrome failed to start (attempt {retry + 1}/{max_chrome_retries}): {str(e)[:100]}")
+                                            logger.info(f"⏳ Retrying in {wait_time} seconds...")
+                                        time.sleep(wait_time)
+                                        # Kill any stuck Chrome processes
+                                        try:
+                                            import subprocess
+                                            subprocess.run(['pkill', '-9', 'chrome'], stderr=subprocess.DEVNULL)
+                                            subprocess.run(['pkill', '-9', 'chromedriver'], stderr=subprocess.DEVNULL)
+                                        except:
+                                            pass
+                                    else:
+                                        with self.lock:
+                                            logger.error(f"❌ Chrome failed to start after {max_chrome_retries} attempts")
+                                        raise
                     
                     # Set page load timeout to prevent infinite hangs
                     driver.set_page_load_timeout(120)  # 2 minutes max for page load

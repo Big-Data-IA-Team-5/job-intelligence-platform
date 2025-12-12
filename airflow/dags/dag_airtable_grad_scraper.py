@@ -25,9 +25,9 @@ default_args = {
     'depends_on_past': False,
     'email_on_failure': False,
     'email_on_retry': False,
-    'retries': 1,
+    'retries': 2,
     'retry_delay': timedelta(minutes=5),
-    'execution_timeout': timedelta(hours=8),  # 8 hours for 15 days of data scraping
+    'execution_timeout': timedelta(hours=2, minutes=45),  # 2h 45min to stay under Celery 3hr timeout
 }
 
 def scrape_grad_jobs(**context):
@@ -35,16 +35,10 @@ def scrape_grad_jobs(**context):
     Scrape all graduate job categories from Airtable
     """
     import sys
-    import signal
-    
-    def timeout_handler(signum, frame):
-        print("\n⏱️  TIMEOUT: Scraper exceeded 45-minute limit")
-        raise TimeoutError("Scraper timeout after 45 minutes")
     
     try:
-        # Set timeout to 45 minutes
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(2700)  # 45 minutes in seconds
+        # Timeout managed by Airflow's execution_timeout parameter (2 hours)
+        # No need for signal.alarm() which can kill process without proper error logging
         
         # Load code from GCS
         print("\n" + "=" * 80)
@@ -73,14 +67,14 @@ def scrape_grad_jobs(**context):
         sys.stdout.flush()
         cleanup_old_s3_files(prefix='raw/airtable/grad/', days_to_keep=30)
         
-        # Configuration - PRODUCTION OPTIMIZED
-        hours_lookback = 360  # 15 days (extended to get more job data)
-        num_workers = 1       # Reduced to 1 worker (Composer has limited resources for Selenium)
+        # Configuration - PRODUCTION OPTIMIZED (Celery timeout = 3 hours)
+        hours_lookback = 168  # 7 days (reduced from 15 to fit Celery 3hr timeout)
+        num_workers = 2       # 2 workers for faster parallel scraping while staying within memory limits
         
         print(f"\n⚙️  Configuration:")
         print(f"   Time window: Last {hours_lookback} hours ({hours_lookback/24:.0f} days)")
         print(f"   Workers: {num_workers}")
-        print(f"   Max timeout: 45 minutes")
+        print(f"   Celery timeout: 3 hours (Composer default)")
         sys.stdout.flush()
         
         # Initialize scraper
@@ -127,11 +121,6 @@ def scrape_grad_jobs(**context):
         
         return total_jobs
         
-    except TimeoutError as e:
-        print(f"\n⏱️  TIMEOUT ERROR: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
-        raise
     except Exception as e:
         print(f"\n❌ ERROR in scrape_grad_jobs: {str(e)}")
         import traceback

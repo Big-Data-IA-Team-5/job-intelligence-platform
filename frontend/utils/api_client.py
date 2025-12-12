@@ -10,7 +10,7 @@ class APIClient:
     """Client for communicating with the backend API"""
     
     def __init__(self, base_url: Optional[str] = None):
-        self.base_url = base_url or os.getenv("BACKEND_URL", "http://localhost:8000")
+        self.base_url = base_url or os.getenv("BACKEND_URL", "https://job-intelligence-backend-97083220044.us-central1.run.app")
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json"

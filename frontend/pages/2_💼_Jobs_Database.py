@@ -98,7 +98,13 @@ def search_jobs(filters):
     """Search jobs from backend API with filters"""
     try:
         response = st.session_state.api_client.post('/api/jobs/search', json=filters)
-        return response['jobs'], response['total']
+        # Validate response structure
+        if isinstance(response, dict):
+            jobs = response.get('jobs', [])
+            total = response.get('total', 0)
+            return jobs, total
+        else:
+            return [], 0
     except Exception as e:
         st.error(f"Failed to load jobs: {e}")
         return [], 0
@@ -124,6 +130,14 @@ stats = get_job_stats()
 if not stats:
     st.error("Unable to connect to backend. Please ensure backend service is running.")
     st.stop()
+
+# Ensure stats has required keys with defaults
+stats = {
+    'total_jobs': stats.get('total_jobs', 0),
+    'h1b_sponsors': stats.get('h1b_sponsors', 0),
+    'remote_jobs': stats.get('remote_jobs', 0),
+    'avg_salary': stats.get('avg_salary', None)
+}
 
 # Header
 st.markdown("""
@@ -377,8 +391,7 @@ else:
             hide_index=True,
             column_config={
                 "🎯 Apply": st.column_config.LinkColumn(
-                    "🔗 Apply",
-                    display_text="Apply"
+                    "🔗 Apply"
                 )
             }
         )

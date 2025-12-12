@@ -249,10 +249,23 @@ else:
             if message["role"] == "assistant" and "jobs" in message:
                 jobs = message["jobs"]
                 if jobs and len(jobs) > 0:
-                    st.markdown(f"---")
-                    st.markdown(f"### 🎯 Found {len(jobs)} jobs (showing {min(len(jobs), 10)})")
+                    # Deduplicate jobs by TITLE + COMPANY + LOCATION
+                    seen_jobs = set()
+                    unique_jobs = []
+                    for job in jobs:
+                        job_key = (
+                            str(job.get('TITLE', '')).lower().strip(),
+                            str(job.get('COMPANY', '')).lower().strip(),
+                            str(job.get('LOCATION', '')).lower().strip()
+                        )
+                        if job_key not in seen_jobs:
+                            seen_jobs.add(job_key)
+                            unique_jobs.append(job)
                     
-                    for i, job in enumerate(jobs[:10]):  # Show first 10 jobs
+                    st.markdown(f"---")
+                    st.markdown(f"### 🎯 Found {len(unique_jobs)} jobs (showing {min(len(unique_jobs), 10)})")
+                    
+                    for i, job in enumerate(unique_jobs[:10]):  # Show first 10 unique jobs
                         with st.expander(f"**{i+1}. {job.get('TITLE', 'Unknown Title')}** at {job.get('COMPANY', 'Unknown')}"):
                             col1, col2 = st.columns([3, 1])
                             

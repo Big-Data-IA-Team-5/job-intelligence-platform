@@ -59,13 +59,13 @@ models:
         description: "Average H1B approval rate"
       
       - name: description_embedding
-        description: "Vector embedding of job description (VECTOR type - 768 dimensions)"
-        data_type: ARRAY
-        # Note: dbt doesn't support VECTOR type natively, using ARRAY as placeholder
-        # Actual Snowflake type is VECTOR(FLOAT, 768)
+        description: "Vector embedding of job description (stored as VARIANT for dbt compatibility - 768 dimensions)"
+        data_type: VARIANT
+        # Note: dbt doesn't support VECTOR type natively, using VARIANT to store array
+        # Can be cast back to VECTOR for similarity search operations
       
       - name: skills_embedding
-        description: "Vector embedding of extracted skills (VECTOR type - 768 dimensions)"
-        data_type: ARRAY
-        # Note: dbt doesn't support VECTOR type natively, using ARRAY as placeholder
-        # Actual Snowflake type is VECTOR(FLOAT, 768)
+        description: "Vector embedding of extracted skills (stored as VARIANT for dbt compatibility - 768 dimensions)"
+        data_type: VARIANT
+        # Note: dbt doesn't support VECTOR type natively, using VARIANT to store array
+        # Can be cast back to VECTOR for similarity search operations

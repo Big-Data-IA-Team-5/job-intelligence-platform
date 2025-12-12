@@ -6,8 +6,8 @@ Pipeline: Download DBT from GCS -> Run DBT -> Verify Results
 """
 
 from airflow import DAG
-from airflow.operators.python import PythonOperator, BranchPythonOperator
-from airflow.operators.dummy import DummyOperator
+from airflow.operators.python import PythonOperator
+from airflow.exceptions import AirflowSkipException
 from airflow.utils.dates import days_ago
 from datetime import datetime, timedelta
 import pendulum
@@ -86,10 +86,10 @@ def check_raw_data_exists(**context):
         
         if row_count > 0:
             print(f"\n✅ Found {row_count:,} rows - proceeding with DBT transformations")
-            return 'download_dbt_project'
+            # Continue to next task
         else:
             print("\n⚠️  No raw data found - skipping DBT transformations")
-            return 'skip_dbt'
+            raise AirflowSkipException("No raw data to process")
             
     except Exception as e:
         print(f"\n❌ Error checking raw data: {e}")
@@ -100,7 +100,7 @@ def check_raw_data_exists(**context):
 
 def download_dbt_project(**context):
     """
-    Download DBT project files from GCS to /tmp/airflow_dbt
+    Download DBT project files from GCS to GCS-synced directory (visible to all workers)
     """
     from google.cloud import storage
     import shutil
@@ -114,9 +114,13 @@ def download_dbt_project(**context):
     client = storage.Client()
     gcs_bucket = client.bucket(bucket)
     
-    # Create local DBT directory
-    local_dbt_path = '/tmp/airflow_dbt'
+    # Use GCS synced directory - accessible to all workers
+    # Cloud Composer uses /home/airflow/gcs for GCS-synced files
+    local_dbt_path = '/home/airflow/gcs/dbt_project'
+    
+    # Clean and create
     if os.path.exists(local_dbt_path):
+        import shutil
         shutil.rmtree(local_dbt_path)
     os.makedirs(local_dbt_path, exist_ok=True)
     
@@ -162,6 +166,22 @@ def download_dbt_project(**context):
     if missing_files:
         raise FileNotFoundError(f"Missing required DBT files: {missing_files}")
     
+    # Force GCS FUSE cache sync by listing directory
+    print(f"\n🔄 Syncing GCS FUSE cache...")
+    import time
+    time.sleep(2)  # Wait for FUSE to sync
+    all_files = []
+    for root, dirs, files in os.walk(local_dbt_path):
+        all_files.extend(files)
+    print(f"   ✓ Cache synced - {len(all_files)} files visible")
+    
+    # Final verification with absolute paths
+    for file in required_files:
+        abs_path = os.path.join(local_dbt_path, file)
+        if not os.path.exists(abs_path):
+            raise FileNotFoundError(f"File not found after sync: {abs_path}")
+        print(f"   ✓ Verified: {abs_path}")
+    
     print(f"\n✅ DBT project downloaded successfully to {local_dbt_path}")
     
     # Push path to XCom
@@ -178,10 +198,12 @@ def install_dbt_deps(**context):
     print("INSTALLING DBT DEPENDENCIES")
     print("=" * 80)
     
-    dbt_path = context['ti'].xcom_pull(key='dbt_path', task_ids='download_dbt_project')
+    # Use GCS synced directory
+    # Cloud Composer uses /home/airflow/gcs for GCS-synced files
+    dbt_path = '/home/airflow/gcs/dbt_project'
     
-    if not dbt_path or not os.path.exists(dbt_path):
-        raise FileNotFoundError(f"DBT path not found: {dbt_path}")
+    if not os.path.exists(dbt_path):
+        raise FileNotFoundError(f"DBT path not found: {dbt_path}. Make sure download_dbt_project task ran successfully.")
     
     print(f"\n📂 DBT path: {dbt_path}")
     
@@ -318,33 +340,19 @@ def run_dbt_transformations(**context):
     print("RUNNING DBT TRANSFORMATIONS")
     print("=" * 80)
     
-    # Try to get from XCom first
-    dbt_path = context['ti'].xcom_pull(key='dbt_path', task_ids='download_dbt_project')
+    # Use GCS synced directory - accessible across all workers
+    # Cloud Composer uses /home/airflow/gcs for GCS-synced files
+    dbt_path = '/home/airflow/gcs/dbt_project'
     
-    # If not found (different worker), download DBT project ourselves
-    if not dbt_path or not os.path.exists(dbt_path):
-        print(f"\n⚠️ DBT path not found from XCom or doesn't exist: {dbt_path}")
-        print("📥 Downloading DBT project to this worker...")
-        
-        bucket_name = get_composer_bucket()
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-        
-        local_dbt_path = '/tmp/airflow_dbt'
-        os.makedirs(local_dbt_path, exist_ok=True)
-        
-        # Download all files from dbt/ in GCS
-        blobs = bucket.list_blobs(prefix='dbt/')
-        for blob in blobs:
-            if blob.name.endswith('/'):
-                continue
-            local_file = os.path.join(local_dbt_path, blob.name.replace('dbt/', ''))
-            os.makedirs(os.path.dirname(local_file), exist_ok=True)
-            blob.download_to_filename(local_file)
-            print(f"   Downloaded: {blob.name}")
-        
-        dbt_path = local_dbt_path
-        print(f"\n✅ DBT project downloaded to {dbt_path}")
+    # Verify path exists
+    if not os.path.exists(dbt_path):
+        raise FileNotFoundError(f"DBT path not found: {dbt_path}. Make sure download_dbt_project task ran successfully.")
+    
+    # Verify critical files
+    required_files = ['dbt_project.yml', 'profiles.yml']
+    missing = [f for f in required_files if not os.path.exists(os.path.join(dbt_path, f))]
+    if missing:
+        raise FileNotFoundError(f"Missing DBT files: {missing}. Download task may have failed.")
     
     print(f"\n📂 DBT path: {dbt_path}")
     print(f"📝 Running: python -m dbt.cli.main run --profiles-dir {dbt_path} --target prod")
@@ -353,7 +361,7 @@ def run_dbt_transformations(**context):
     import time
     import threading
     
-    timeout_seconds = 3600  # 1 hour timeout
+    timeout_seconds = 7200  # 2 hour total timeout for full DBT run
     start_time = time.time()
     
     try:
@@ -369,7 +377,7 @@ def run_dbt_transformations(**context):
         
         # Read output in real-time with timeout check
         last_output_time = time.time()
-        output_timeout = 600  # Kill if no output for 10 minutes
+        output_timeout = 3600  # Kill if no output for 60 minutes (h1b_matched_jobs processes 71K jobs)
         
         while True:
             # Check total timeout
@@ -475,8 +483,8 @@ with DAG(
     tags=['dbt', 'transformation', 'snowflake', 'processing', 'marts'],
 ) as dag:
     
-    # Task 1: Check if raw data exists
-    check_data = BranchPythonOperator(
+    # Task 1: Check if raw data exists (skips all downstream if no data)
+    check_data = PythonOperator(
         task_id='check_raw_data',
         python_callable=check_raw_data_exists,
         provide_context=True,
@@ -519,18 +527,9 @@ with DAG(
         task_id='print_summary',
         python_callable=print_pipeline_summary,
         provide_context=True,
-        trigger_rule='all_done',  # Run even if previous tasks fail
+        trigger_rule='all_done',  # Run even if previous tasks fail or are skipped
     )
     
-    # Task 7: Skip DBT (dummy task for branching)
-    skip_dbt = DummyOperator(
-        task_id='skip_dbt',
-        trigger_rule='none_failed_or_skipped',
-    )
-    
-    # Pipeline with branching
-    # Check data -> If data exists: Download DBT -> Install deps -> Run DBT -> Verify -> Summary
-    #            -> If no data: Skip -> Summary
-    check_data >> [download_dbt, skip_dbt]
-    download_dbt >> install_deps >> run_dbt >> verify_results >> summary_task
-    skip_dbt >> summary_task
+    # Linear pipeline: Check data -> Download DBT -> Install deps -> Run DBT -> Verify -> Summary
+    # If check_data finds no data, it raises AirflowSkipException which skips all downstream tasks except summary
+    check_data >> download_dbt >> install_deps >> run_dbt >> verify_results >> summary_task

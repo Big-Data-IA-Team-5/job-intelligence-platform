@@ -70,7 +70,8 @@ def load_salary_by_role():
     """Load salary data by role"""
     try:
         return st.session_state.api_client.get('/analytics/salary-by-role')
-    except:
+    except Exception as e:
+        st.error(f"Failed to load salary data from backend: {str(e)}")
         return []
 
 @st.cache_data(ttl=600)
@@ -78,7 +79,8 @@ def load_location_salary():
     """Load location salary data"""
     try:
         return st.session_state.api_client.get('/analytics/location-salary')
-    except:
+    except Exception as e:
+        st.error(f"Failed to load location data from backend: {str(e)}")
         return []
 
 # ============ PREDICTION FUNCTIONS ============
@@ -87,28 +89,38 @@ def predict_salary(role, location, experience_years, h1b_sponsor, work_model):
     salary_data = load_salary_by_role()
     location_data = load_location_salary()
     
+    # Validate data types
+    if not isinstance(salary_data, list):
+        salary_data = []
+    if not isinstance(location_data, list):
+        location_data = []
+    
     if not salary_data:
         return None, 0
     
     # Find base salary for role
     role_salary = None
     for r in salary_data:
-        if r['role'].lower() == role.lower():
-            role_salary = r['avg_salary']
-            break
+        if isinstance(r, dict) and 'role' in r and 'avg_salary' in r:
+            if r['role'].lower() == role.lower():
+                role_salary = r['avg_salary']
+                break
     
     if not role_salary:
         # Use average if role not found
-        role_salary = sum(r['avg_salary'] for r in salary_data) / len(salary_data) if salary_data else 100000
+        valid_salaries = [r['avg_salary'] for r in salary_data if isinstance(r, dict) and 'avg_salary' in r]
+        role_salary = sum(valid_salaries) / len(valid_salaries) if valid_salaries else 100000
     
     # Location adjustment
     location_multiplier = 1.0
     for loc in location_data:
-        if location.lower() in loc['city'].lower() or loc['city'].lower() in location.lower():
-            # Compare to average
-            avg_salary = sum(l['avg_salary'] for l in location_data) / len(location_data) if location_data else 100000
-            location_multiplier = loc['avg_salary'] / avg_salary if avg_salary > 0 else 1.0
-            break
+        if isinstance(loc, dict) and 'city' in loc and 'avg_salary' in loc:
+            if location.lower() in loc['city'].lower() or loc['city'].lower() in location.lower():
+                # Compare to average
+                valid_loc_salaries = [l['avg_salary'] for l in location_data if isinstance(l, dict) and 'avg_salary' in l]
+                avg_salary = sum(valid_loc_salaries) / len(valid_loc_salaries) if valid_loc_salaries else 100000
+                location_multiplier = loc['avg_salary'] / avg_salary if avg_salary > 0 else 1.0
+                break
     
     # Experience adjustment
     if experience_years < 1:
@@ -177,6 +189,12 @@ with col1:
     salary_data = load_salary_by_role()
     location_data = load_location_salary()
     
+    # Ensure data is list before using list comprehension
+    if not isinstance(salary_data, list):
+        salary_data = []
+    if not isinstance(location_data, list):
+        location_data = []
+    
     roles = [r['role'] for r in salary_data] if salary_data else ['Software Engineer', 'Data Scientist', 'Data Engineer']
     locations = [l['city'] for l in location_data] if location_data else ['San Francisco, CA', 'New York, NY', 'Seattle, WA']
     
@@ -189,95 +207,111 @@ with col1:
     predict_btn = st.button("🔮 Predict Salary", type="primary", use_container_width=True, key="salary_predict_btn")
 
 with col2:
-        if predict_btn:
-            with st.spinner("🔮 Calculating prediction..."):
-                prediction, base_salary = predict_salary(
-                    selected_role, selected_location, experience_years, h1b_sponsor, work_model
-                )
-            
-            if prediction:
-                st.markdown(f"""
-                <div class='prediction-card'>
-                    <div style='text-align: center;'>
-                        <div style='font-size: 1.2em; margin-bottom: 10px;'>Predicted Annual Salary</div>
-                        <div class='prediction-value'>${prediction['predicted']:,.0f}</div>
-                        <div style='font-size: 1.1em; margin: 10px 0;'>
-                            Range: ${prediction['min']:,.0f} - ${prediction['max']:,.0f}
-                        </div>
-                        <div class='confidence-badge'>
-                            Confidence: {prediction['confidence']}%
-                        </div>
+    if predict_btn:
+        with st.spinner("🔮 Calculating prediction..."):
+            prediction, base_salary = predict_salary(
+                selected_role, selected_location, experience_years, h1b_sponsor, work_model
+            )
+        
+        if prediction:
+            st.markdown(f"""
+            <div class='prediction-card'>
+                <div style='text-align: center;'>
+                    <div style='font-size: 1.2em; margin-bottom: 10px;'>Predicted Annual Salary</div>
+                    <div class='prediction-value'>${prediction['predicted']:,.0f}</div>
+                    <div style='font-size: 1.1em; margin: 10px 0;'>
+                        Range: ${prediction['min']:,.0f} - ${prediction['max']:,.0f}
+                    </div>
+                    <div class='confidence-badge'>
+                        Confidence: {prediction['confidence']}%
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
-                
-                # Calculate location_mult BEFORE using it in breakdown
-                location_mult = 1.0
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Calculate location_mult BEFORE using it in breakdown
+            location_mult = 1.0
+            if location_data:
                 for loc in location_data:
-                    if selected_location.lower() in loc['city'].lower() or loc['city'].lower() in selected_location.lower():
-                        avg = sum(l['avg_salary'] for l in location_data) / len(location_data) if location_data else 100000
-                        location_mult = loc['avg_salary'] / avg if avg > 0 else 1.0
+                    if isinstance(loc, dict) and 'city' in loc and 'avg_salary' in loc:
+                        if selected_location.lower() in loc['city'].lower() or loc['city'].lower() in selected_location.lower():
+                            valid_loc_salaries = [l['avg_salary'] for l in location_data if isinstance(l, dict) and 'avg_salary' in l]
+                            avg = sum(valid_loc_salaries) / len(valid_loc_salaries) if valid_loc_salaries else 100000
+                            location_mult = loc['avg_salary'] / avg if avg > 0 else 1.0
+                            break
+            
+            # Calculate other multipliers - MUST MATCH predict_salary() logic
+            if experience_years < 1:
+                exp_mult = 0.7  # Entry level
+            elif experience_years < 3:
+                exp_mult = 0.85  # Junior
+            elif experience_years < 5:
+                exp_mult = 1.0  # Mid-level
+            elif experience_years < 8:
+                exp_mult = 1.2  # Senior
+            else:
+                exp_mult = 1.4  # Staff/Principal
+            
+            h1b_mult = 1.05 if h1b_sponsor else 1.0
+            
+            # Breakdown
+            st.markdown("### 💡 Salary Breakdown")
+            breakdown_cols = st.columns(4)
+            
+            with breakdown_cols[0]:
+                st.metric("Base Role Salary", f"${base_salary:,.0f}")
+            with breakdown_cols[1]:
+                st.metric("Location Factor", f"{location_mult:.2f}x")
+            with breakdown_cols[2]:
+                st.metric("Experience Factor", f"{exp_mult:.2f}x")
+            with breakdown_cols[3]:
+                st.metric("H-1B Premium", f"+{((h1b_mult-1)*100):.0f}%")
+            
+            # Comparison chart
+            if salary_data:
+                st.markdown("### 📊 Market Comparison")
+                role_salaries = {r['role']: r['avg_salary'] for r in salary_data[:10]}
+                
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=list(role_salaries.keys()),
+                    y=list(role_salaries.values()),
+                    marker_color='lightblue',
+                    name='Market Average',
+                    opacity=0.7
+                ))
+                
+                # Always show prediction marker
+                matching_role = None
+                for role in role_salaries.keys():
+                    if selected_role.lower() in role.lower() or role.lower() in selected_role.lower():
+                        matching_role = role
                         break
                 
-                # Calculate other multipliers
-                exp_mult = 1.0 + (experience_years * 0.05) if experience_years < 8 else 1.4
-                h1b_mult = 1.05 if h1b_sponsor else 1.0
-                
-                # Breakdown
-                st.markdown("### 💡 Salary Breakdown")
-                breakdown_cols = st.columns(4)
-                
-                with breakdown_cols[0]:
-                    st.metric("Base Role Salary", f"${base_salary:,.0f}")
-                with breakdown_cols[1]:
-                    st.metric("Location Factor", f"{location_mult:.2f}x")
-                with breakdown_cols[2]:
-                    st.metric("Experience Factor", f"{exp_mult:.2f}x")
-                with breakdown_cols[3]:
-                    st.metric("H-1B Premium", f"+{((h1b_mult-1)*100):.0f}%")
-                
-                # Comparison chart
-                if salary_data:
-                    st.markdown("### 📊 Market Comparison")
-                    role_salaries = {r['role']: r['avg_salary'] for r in salary_data[:10]}
-                    
-                    fig = go.Figure()
-                    fig.add_trace(go.Bar(
-                        x=list(role_salaries.keys()),
-                        y=list(role_salaries.values()),
-                        marker_color='lightblue',
-                        name='Market Average',
-                        opacity=0.7
+                if matching_role:
+                    fig.add_trace(go.Scatter(
+                        x=[matching_role],
+                        y=[prediction['predicted']],
+                        mode='markers+text',
+                        marker=dict(size=25, color='red', symbol='star', line=dict(color='darkred', width=2)),
+                        text=[f"${prediction['predicted']:,.0f}"],
+                        textposition='top center',
+                        name='Your Prediction',
+                        showlegend=True
                     ))
-                    
-                    # Always show prediction marker
-                    matching_role = None
-                    for role in role_salaries.keys():
-                        if selected_role.lower() in role.lower() or role.lower() in selected_role.lower():
-                            matching_role = role
-                            break
-                    
-                    if matching_role:
-                        fig.add_trace(go.Scatter(
-                            x=[matching_role],
-                            y=[prediction['predicted']],
-                            mode='markers+text',
-                            marker=dict(size=25, color='red', symbol='star', line=dict(color='darkred', width=2)),
-                            text=[f"${prediction['predicted']:,.0f}"],
-                            textposition='top center',
-                            name='Your Prediction',
-                            showlegend=True
-                        ))
-                    
-                    fig.update_layout(
-                        title="Your Prediction vs Market Average",
-                        xaxis_title="Role",
-                        yaxis_title="Salary ($)",
-                        height=400,
-                        showlegend=True,
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                
+                fig.update_layout(
+                    title="Your Prediction vs Market Average",
+                    xaxis_title="Role",
+                    yaxis_title="Salary ($)",
+                    height=400,
+                    showlegend=True,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.error("⚠️ Unable to generate prediction. Please check backend connection.")
+            st.info(f"Debug: salary_data available: {len(salary_data) if salary_data else 0}, location_data: {len(location_data) if location_data else 0}")
 
 # ============ FOOTER ============
 st.divider()
