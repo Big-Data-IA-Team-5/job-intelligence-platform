@@ -18,35 +18,6 @@ Follow the step-by-step guided codelab to explore and deploy the platform:
 **Backend API:** https://job-intelligence-backend-97083220044.us-central1.run.app  
 **Project:** job-intelligence-platform (97083220044) | **Region:** us-central1
 
-## Recent Updates (2025-12-12)
-
-- Frontend: Removed career advice example button
-- Frontend: Preloaded jobs on page load
-- Frontend: Timezone-aware greeting via `APP_TIMEZONE` (defaults to America/New_York).
-- Frontend: Removed job card rendering from Home to avoid duplicate listings.
-- Frontend: Advanced Analytics shows H-1B breakdown in table and tooltips:
-  - ✅ Approved (`h1b_certified`), 📋 Total Filed (`h1b_applications`), 📊 Rate = (Approved / Filed) × 100.
-- Backend: Company filter uses ILIKE for fuzzy matching
-- Backend: Analytics filters exclude placeholder company names (Unknown/Confidential/N/A/etc.).
-- Backend: `/analytics/visa-sponsors` now returns `h1b_applications` and `h1b_certified`.
-
-### Updated Deploy Command (Frontend)
-
-```bash
-gcloud run deploy job-intelligence-frontend \
-  --source . \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --timeout 300 \
-  --memory 2Gi \
-  --cpu 2 \
-  --max-instances 10 \
-  --set-env-vars BACKEND_URL=https://job-intelligence-backend-97083220044.us-central1.run.app,APP_TIMEZONE=America/New_York \
-  --project job-intelligence-platform
-```
-
-
-> A comprehensive end-to-end AI-powered job search platform that scrapes 50K+ jobs, enriches them with H-1B visa data, and provides intelligent matching with natural language understanding.
 
 [![Cloud](https://img.shields.io/badge/Cloud-GCP-4285F4?logo=google-cloud)](https://cloud.google.com)
 [![Database](https://img.shields.io/badge/Database-Snowflake-29B5E8?logo=snowflake)](https://snowflake.com)
@@ -62,12 +33,8 @@ gcloud run deploy job-intelligence-frontend \
 - [Data Pipeline](#-data-pipeline)
 - [AI Agents](#-ai-agents)
 - [Deployment](#-deployment)
-- [Configuration](#-configuration)
 - [Cost Optimization](#-cost-optimization)
 - [Troubleshooting](#-troubleshooting)
-
-
-
 
 
 ## 🎯 Overview
@@ -711,30 +678,11 @@ GET  /api/analytics/companies  # Company insights
 GET  /api/analytics/trends     # Salary/location trends
 ```
 
-## 🤝 Contributing
-
-### Development Setup
-```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run locally
-streamlit run frontend/Home.py
-uvicorn backend.app.main:app --reload
-```
-
 ### Code Style
 - **Python**: Black formatter (line length 100)
 - **SQL**: Lowercase keywords, 2-space indent
 - **Commits**: Conventional commits (`feat:`, `fix:`, `docs:`)
 
-## 📄 License
-
-MIT License - See [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
